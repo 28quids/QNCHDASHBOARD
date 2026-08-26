@@ -1,0 +1,12 @@
+node_modules/
+.next/
+coverage/
+.env
+.env.local
+.env.*.local
+!.env.example
+supabase/.temp/
+*.pem
+*.key
+service-account*.json
+exports/
