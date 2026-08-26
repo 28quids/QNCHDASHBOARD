@@ -1,6 +1,10 @@
 -- Tenant access model for authenticated dashboard users.
 -- Connector workers use the service role; raw payloads and OAuth tokens deliberately
 -- receive no authenticated-user policy.
+--
+-- Transaction-wrapped so a failure part-way through cannot leave policies half-applied.
+
+begin;
 
 create or replace function public.is_organisation_member(requested_organisation_id uuid)
 returns boolean
@@ -165,3 +169,5 @@ create policy ad_entities_read on public.ad_entities
 
 -- No policies are created for integration_tokens, sync_cursors, sync_runs,
 -- raw_import_objects, or other internal tables. RLS therefore denies browser access.
+
+commit;

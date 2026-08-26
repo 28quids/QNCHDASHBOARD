@@ -84,7 +84,13 @@ function normaliseRefund(
   options: ShopifyNormalisationOptions,
 ): RefundInput {
   const lines = refund.refundLineItems.nodes;
-  const refundedTax = sum(lines.map((line) => amountOf(line.totalTaxSet)));
+  const shippingLines = refund.refundShippingLines?.nodes ?? [];
+  // Refunded shipping is taxed too. Counting only line tax would leave that VAT in the
+  // refund and overstate the amount coming off net revenue.
+  const refundedTax = sum([
+    ...lines.map((line) => amountOf(line.totalTaxSet)),
+    ...shippingLines.map((line) => amountOf(line.taxAmountSet)),
+  ]);
   const total = amountOf(refund.totalRefundedSet);
 
   return {

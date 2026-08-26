@@ -9,7 +9,9 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "migrate": "node scripts/migrate.mjs",
+    "migrate:status": "node scripts/migrate.mjs --status"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
@@ -21,10 +23,12 @@
   },
   "devDependencies": {
     "@types/node": "^24.10.0",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
     "eslint": "^9.38.0",
     "eslint-config-next": "^16.0.1",
+    "pg": "^8.23.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.8"
   }

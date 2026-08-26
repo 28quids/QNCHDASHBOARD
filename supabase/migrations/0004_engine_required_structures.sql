@@ -4,6 +4,13 @@
 -- the date it was processed rather than against the original order date. An order-level refund
 -- total cannot express that. Recurring costs likewise need an explicit period so a daily P&L
 -- can spread them and still sum back to the approved monthly amount.
+--
+-- Wrapped in a transaction deliberately. None of the statements below are individually
+-- idempotent, so a failure part-way through would otherwise leave the schema half-built
+-- with no clean way to re-run. Postgres DDL is transactional: on any error the whole
+-- migration rolls back and the database is left exactly as it was.
+
+begin;
 
 alter table public.cost_assumptions
   add column period_unit text check (period_unit in ('day', 'week', 'month', 'year'));
@@ -152,3 +159,5 @@ create policy finance_admin_manage on public.variant_inventory_settings
   for all to authenticated
   using (public.has_organisation_role(organisation_id, array['owner', 'finance_admin']))
   with check (public.has_organisation_role(organisation_id, array['owner', 'finance_admin']));
+
+commit;

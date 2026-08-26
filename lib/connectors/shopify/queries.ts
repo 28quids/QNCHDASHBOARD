@@ -98,6 +98,22 @@ export const ORDERS_QUERY = /* GraphQL */ `
               currencyCode
             }
           }
+          refundShippingLines(first: 10) {
+            nodes {
+              subtotalAmountSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
+              }
+              taxAmountSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
+              }
+            }
+          }
           refundLineItems(first: 100) {
             nodes {
               quantity

@@ -81,3 +81,29 @@ both and raises a `duplicated_cost_source` warning — it does not silently pick
 | `lib/monitoring/targets.ts` | Configured thresholds into green/amber/red |
 | `lib/monitoring/data-quality.ts` | Freshness, coverage, mapping checks |
 | `lib/monitoring/reconciliation.ts` | Cross-source differences |
+
+## Persistence
+
+The engine stays pure. Everything that touches the database lives outside it.
+
+| Module | Responsibility |
+|---|---|
+| `lib/connectors/supabase-sync-store.ts` | Run claiming, cursors and outcomes for `runSync` |
+| `lib/repositories/shopify-repository.ts` | Normalised Shopify data into rows |
+| `lib/connectors/shopify/sync.ts` | Builds the runnable order sync from the three parts |
+
+**Two shapes per order, not one.** `normaliseOrder` produces the engine's VAT-exclusive
+inputs and drops what the calculation does not need — the timestamp, the currency, the tax
+it stripped, the financial status. The tables store source facts and need those back, so the
+repository maps the raw node alongside the normalised figures. Writing the business date into
+`ordered_at` would silently shift rows for any non-UTC timezone.
+
+**Acquisition is decided against stored history.** `shopify_customers.first_order_at` is what
+stops a sync of a recent window from reading a returning customer's order as their first and
+inflating new-customer counts and CAC. It only ever moves backwards, because a backfill pages
+by `updatedAt` and a customer's true first order can arrive in any page.
+
+**Unresolved variants are reported, not invented.** Orders usually sync before products. A
+variant row requires a product, so fabricating one from an order line would put a fake row in
+the catalogue. Lines keep their SKU with a null `variant_id`, and the count is returned so
+incomplete SKU reporting is visible rather than silent.

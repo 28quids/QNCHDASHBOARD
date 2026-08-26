@@ -38,12 +38,23 @@ export interface ShopifyRefundLineItemNode {
   totalTaxSet: MoneyBag;
 }
 
+/** Shipping refunded alongside the goods. Carried separately from the line items. */
+export interface ShopifyRefundShippingLineNode {
+  subtotalAmountSet: MoneyBag;
+  taxAmountSet: MoneyBag;
+}
+
 export interface ShopifyRefundNode {
   id: string;
   /** When the refund was processed. This is the date policy recognises it against. */
   createdAt: string;
   totalRefundedSet: MoneyBag;
   refundLineItems: { nodes: ShopifyRefundLineItemNode[] };
+  /**
+   * Optional because `totalRefundedSet` already includes refunded shipping. Without it the
+   * shipping portion is invisible, so a refund's parts do not sum back to its total.
+   */
+  refundShippingLines?: { nodes: ShopifyRefundShippingLineNode[] };
 }
 
 export interface ShopifyOrderNode {
