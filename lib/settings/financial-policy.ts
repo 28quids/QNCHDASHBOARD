@@ -33,6 +33,13 @@ export const qnchFinancialPolicyDraft = {
   xeroBankAccountScope: "all_connected_bank_accounts",
   inventoryWindowsDays: [7, 30],
   inventoryAlertWindowDays: 7,
-  cogsMethod: null,
-  agencyAndCreativeTreatment: null,
+  cogsMethod: "standard_landed_cost_per_sku",
+  initialDefaultLandedCogsPerUnitGbp: 7.07,
+  agencyAndCreativeTreatment: {
+    affiliateCommission: "cm2",
+    percentageOfSpendAgencyFee: "cm2",
+    fixedAgencyRetainer: "fixed_operating",
+    creativeProductionAndFreelancers: "fixed_operating",
+    retentionAndCrm: "fixed_operating",
+  },
 } as const;
