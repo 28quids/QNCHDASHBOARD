@@ -9,7 +9,7 @@ Internal business intelligence and financial-control system for QNCH. Supabase/P
 - Decimal-based management financial calculations with automated tests
 - Secret-safe environment template and ignore rules
 
-The initial migration deliberately marks the financial policy as `draft`. It does not make an unapproved VAT, revenue, allocation or cash decision. Those policy values must be signed off before live financial reporting is enabled.
+The initial migration deliberately marks the financial policy as `draft`. Approved policy values are then recorded as date-effective, auditable settings before live financial reporting is enabled.
 
 ## Local setup
 
