@@ -30,6 +30,9 @@ const ASSUMPTION_KEY_COMPONENTS: Record<string, NamedCostComponent> = {
   packaging: "packaging",
   inbound_freight: "inboundFreight",
   payment_processing: "paymentProcessing",
+  // A card rate is normally a percentage *and* a flat charge per transaction. They are two
+  // assumption rows because the key is unique per date, but one cost, so both report here.
+  payment_processing_per_order: "paymentProcessing",
   fulfilment: "fulfilment",
   outbound_shipping: "shipping",
   shipping: "shipping",

@@ -48,6 +48,28 @@ try {
   );
   printTable(connections.rows);
 
+  console.log("\n--- catalogue ---");
+  const variants = await client.query(`
+    select v.external_id, coalesce(v.sku, '(no sku)') as sku, coalesce(v.title, p.title) as title, v.active
+    from public.product_variants v
+    join public.products p on p.id = v.product_id
+    order by sku
+  `);
+  printTable(variants.rows);
+
+  // The window costs must be dated from. Applying today's approved cost to trading that
+  // predates it would restate history against an assumption nobody approved at the time.
+  console.log("\n--- trading window ---");
+  const window = await client.query(`
+    select to_char(min(ordered_at at time zone o.business_timezone), 'YYYY-MM-DD') as first_order,
+           to_char(max(ordered_at at time zone o.business_timezone), 'YYYY-MM-DD') as last_order,
+           count(*) as orders,
+           count(distinct customer_id) as customers
+    from public.shopify_orders s
+    cross join (select business_timezone from public.organisations limit 1) o
+  `);
+  printTable(window.rows);
+
   console.log("\n--- row counts ---");
   const counts = await client.query(`
     select table_name,
