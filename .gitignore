@@ -3,10 +3,11 @@ node_modules/
 coverage/
 .DS_Store
 *.tsbuildinfo
+# Every .env is ignored without exception. There is no committed template — the
+# required variables are documented in the README instead, so no file in the
+# repository ever holds a value that looks like configuration.
 .env
-.env.local
-.env.*.local
-!.env.example
+.env*
 supabase/.temp/
 *.pem
 *.key

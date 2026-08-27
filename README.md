@@ -20,7 +20,7 @@ the result. See `docs/financial-engine.md`.
 
 ## Local setup
 
-1. Copy `.env.example` to `.env.local` and populate only local development credentials.
+1. Create `.env.local` with the variables below.
 2. Run `npm install --legacy-peer-deps`. Plain `npm install` fails on the current peer tree.
 3. Apply the database migrations — see below.
 4. Seed the organisation: `node scripts/seed-organisation.mjs`, and put the printed
@@ -33,6 +33,29 @@ the result. See `docs/financial-engine.md`.
 Steps 6 and 7 are not optional. Until the policy is approved the dashboard shows the
 outstanding decisions instead of figures, and until access is granted every query returns
 nothing — row-level security, not a bug.
+
+## Environment variables
+
+There is deliberately no committed `.env.example`. Every `.env*` file is ignored without
+exception, so nothing in the repository can hold a value that looks like real configuration.
+The list below is the template.
+
+| Variable | Where it comes from |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase → Project Settings → API. Public; ships to the browser. |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Same page. Public by design; RLS is the boundary, not this key. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Same page, `service_role`. **Bypasses RLS** — server-side only. |
+| `SUPABASE_DB_URL` | Supabase → Connect → Session pooler. Used only by the scripts, never by the app. Percent-encode `@ : / ?` in the password. |
+| `ORGANISATION_ID` | Printed by `node scripts/seed-organisation.mjs`. Every table is keyed on it. |
+| `TOKEN_ENCRYPTION_KEY` | Generate 32 random bytes, base64. Encrypts provider tokens at rest — if lost, every stored token must be reconnected. |
+| `CRON_SECRET` | Generate 32 random bytes. Bearer token for `/api/cron/daily`. |
+| `SHOPIFY_SHOP_DOMAIN` | The `myshopify.com` host, no scheme and no trailing slash. |
+| `SHOPIFY_ADMIN_TOKEN` | Admin API access token, begins `shpat_`. Not the `shpss_` secret key, and shown only once. |
+
+Meta, TikTok, Xero and Google Sheets credentials are added when those connectors are built.
+
+`lib/env.ts` validates the server set at startup with zod, so a missing or malformed value
+fails immediately rather than surfacing as an empty dashboard later.
 
 ## Database migrations
 
