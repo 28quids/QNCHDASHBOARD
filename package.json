@@ -19,7 +19,8 @@
     "grant:access": "node scripts/grant-access.mjs",
     "shopify:connect": "tsx scripts/register-shopify-connection.mts",
     "probe:shopify": "tsx scripts/probe-shopify.mts",
-    "backfill:shopify": "tsx scripts/backfill-shopify.mts"
+    "backfill:shopify": "tsx scripts/backfill-shopify.mts",
+    "reconcile:shopify": "tsx scripts/reconcile-shopify.mts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",

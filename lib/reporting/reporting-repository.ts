@@ -406,13 +406,24 @@ export function createReportingRepository(
 
     /** Everything `buildDailyFinancials` needs for one date range. */
     async loadFacts(range: DateRange, policy: FinancialPolicy): Promise<ReportingFacts> {
-      const refundRows = await loadRefunds(range);
-      const originalOrderIds = [...new Set(refundRows.map((row) => row.order_id as string))];
+      const allRefundRows = await loadRefunds(range);
+      const originalOrderIds = [...new Set(allRefundRows.map((row) => row.order_id as string))];
 
       const [orderRows, context] = await Promise.all([
         loadOrders(range, originalOrderIds),
         loadAllocationContext(),
       ]);
+
+      /**
+       * A refund only counts when its original order does.
+       *
+       * `loadOrders` drops test and cancelled orders, so an order that survives it is
+       * reportable. Cancelling an order and refunding it is routine, and the cancelled
+       * order's revenue was never recognised — subtracting its refund anyway would take
+       * money off net revenue that was never added, understating it.
+       */
+      const reportableOrderIds = new Set(orderRows.map((row) => row.id as string));
+      const refundRows = allRefundRows.filter((row) => reportableOrderIds.has(row.order_id as string));
 
       const orderIds = orderRows.map((row) => row.id as string);
       const customerIds = [
@@ -445,7 +456,10 @@ export function createReportingRepository(
 
       const refunds: RefundInput[] = refundRows.map((row) => ({
         externalId: row.external_id as string,
-        orderExternalId: externalIdByRowId.get(row.order_id as string) ?? (row.order_id as string),
+        // Every surviving refund's order was loaded above, so this always resolves. The
+        // previous fallback put a database UUID into the engine's warnings, which reads as
+        // a missing order rather than as the bug it was.
+        orderExternalId: externalIdByRowId.get(row.order_id as string) as string,
         processedBusinessDate: businessDate(row.processed_at as string),
         // Stored totals include VAT; the engine works VAT-exclusive throughout.
         amount: money(row.total as string).minus(row.tax as string),

@@ -14,6 +14,7 @@ import {
   type DailyFinancialRow,
   type DailyFinancialSummary,
   type DailyWarning,
+  type DailyWarningCode,
 } from "@/lib/financial/daily-aggregation";
 import type { DateRange } from "@/lib/financial/dates";
 import { calculateMarketingPeriod, type MarketingPeriodResult } from "@/lib/financial/marketing";
@@ -109,14 +110,40 @@ function buildMarketing(
 }
 
 /**
- * One warning per distinct cause. A missing cost profile otherwise repeats on every day of the
- * range, which buries the other warnings under it.
+ * One warning per distinct cause for the whole period.
+ *
+ * A warning raised every day otherwise buries the others under it. Two kinds need different
+ * treatment: a warning about a fixed thing — a variant with no cost profile — repeats
+ * identically and is deduplicated, while a warning that counts something differs every day
+ * and is summed into a single period total instead.
  */
 function deduplicateWarnings(warnings: readonly DailyWarning[]): DailyWarning[] {
+  const counted = new Map<DailyWarningCode, number>();
   const seen = new Map<string, DailyWarning>();
+
   for (const warning of warnings) {
+    if (warning.count !== undefined) {
+      counted.set(warning.code, (counted.get(warning.code) ?? 0) + warning.count);
+      continue;
+    }
     const key = `${warning.code}:${warning.detail}`;
     if (!seen.has(key)) seen.set(key, warning);
   }
-  return [...seen.values()];
+
+  const totals = [...counted].map(([code, count]) => ({
+    code,
+    count,
+    detail: PERIOD_WARNING_DETAIL[code](count),
+  }));
+
+  return [...totals, ...seen.values()];
 }
+
+const PERIOD_WARNING_DETAIL: Record<DailyWarningCode, (count: number) => string> = {
+  unattributed_order_lines: (count) =>
+    `${count} order line(s) in this period have no product variant, so they carry revenue but no cost and overstate margin`,
+  missing_variant_costs: (count) => `${count} line(s) sold a variant with no approved cost profile`,
+  line_totals_diverge: (count) => `${count} order(s) have lines that do not sum to the header`,
+  duplicated_cost_source: (count) => `${count} cost(s) are charged by both an assumption and a Xero mapping`,
+  refund_without_original_order: (count) => `${count} refund(s) reference an order that is not in range`,
+};

@@ -70,6 +70,45 @@ try {
   `);
   printTable(window.rows);
 
+  // What the engine will actually count, versus everything that was imported. A backfill
+  // reporting "285 written" says only that 285 rows arrived, not that 285 are reportable.
+  console.log("\n--- orders by month ---");
+  const byMonth = await client.query(
+    `select to_char(ordered_at at time zone o.business_timezone, 'YYYY-MM') as month,
+            count(*) as imported,
+            count(*) filter (where s.is_test) as test,
+            count(*) filter (where s.cancelled_at is not null) as cancelled,
+            count(*) filter (where not s.is_test and s.cancelled_at is null) as reportable
+     from public.shopify_orders s
+     cross join (select business_timezone from public.organisations limit 1) o
+     where s.organisation_id = $1
+     group by 1 order by 1`,
+    [configured],
+  );
+  printTable(byMonth.rows);
+
+  const totals = byMonth.rows.reduce(
+    (running, row) => ({
+      imported: running.imported + Number(row.imported),
+      test: running.test + Number(row.test),
+      cancelled: running.cancelled + Number(row.cancelled),
+      reportable: running.reportable + Number(row.reportable),
+    }),
+    { imported: 0, test: 0, cancelled: 0, reportable: 0 },
+  );
+  console.log(
+    `\n  ${totals.imported} imported = ${totals.reportable} reportable + ${totals.test} test + ${totals.cancelled} cancelled`,
+  );
+
+  console.log("\n--- orders by financial status ---");
+  const byStatus = await client.query(
+    `select coalesce(financial_status, '(none)') as financial_status, count(*) as orders
+     from public.shopify_orders where organisation_id = $1
+     group by 1 order by 2 desc`,
+    [configured],
+  );
+  printTable(byStatus.rows);
+
   console.log("\n--- row counts ---");
   const counts = await client.query(`
     select table_name,

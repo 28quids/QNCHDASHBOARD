@@ -8,6 +8,7 @@ import type { AdSpendInput, MappedExpenseInput, OrderInput, RefundInput } from "
 
 export type DailyWarningCode =
   | "missing_variant_costs"
+  | "unattributed_order_lines"
   | "line_totals_diverge"
   | "duplicated_cost_source"
   | "refund_without_original_order";
@@ -15,6 +16,11 @@ export type DailyWarningCode =
 export interface DailyWarning {
   code: DailyWarningCode;
   detail: string;
+  /**
+   * Present when the warning counts something. Carried as a number so a period summary can
+   * add them up, rather than parsing the figure back out of `detail`.
+   */
+  count?: number;
 }
 
 export interface DailyFinancialRow {
@@ -246,6 +252,18 @@ function collectOrderWarnings(orders: readonly AllocatedOrder[], warnings: Daily
     warnings.push({
       code: "missing_variant_costs",
       detail: `No approved cost profile for variants: ${[...missingVariants].join(", ")}`,
+    });
+  }
+
+  // Revenue that can carry no cost at all. Without this the margin simply reads high, with
+  // nothing to say that a cost was missing rather than genuinely absent.
+  const unattributed = orders.reduce((total, order) => total + order.unattributedLines, 0);
+  if (unattributed > 0) {
+    const affected = orders.filter((order) => order.unattributedLines > 0).length;
+    warnings.push({
+      code: "unattributed_order_lines",
+      detail: `${unattributed} line(s) across ${affected} order(s) have no product variant, so they carry revenue but no cost and overstate margin`,
+      count: unattributed,
     });
   }
 

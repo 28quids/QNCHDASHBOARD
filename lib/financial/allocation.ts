@@ -84,6 +84,13 @@ export interface AllocatedOrder {
   lines: AllocatedLine[];
   /** Variants sold without an approved cost profile. Surfaced as a data-quality failure. */
   missingCostVariantIds: string[];
+  /**
+   * Lines with no variant at all, usually because the product no longer exists in the
+   * catalogue. They carry revenue but can never carry a cost, so they inflate margin. Counted
+   * separately from `missingCostVariantIds`, which is a variant that could be costed but has
+   * not been — a fixable problem, where this one may not be.
+   */
+  unattributedLines: number;
   /** True when line values do not sum to the order header. Reported, never silently corrected. */
   lineTotalsDiverge: boolean;
 }
@@ -171,6 +178,7 @@ export function allocateOrder(order: OrderInput, context: AllocationContext): Al
     costs: orderCosts,
     lines,
     missingCostVariantIds,
+    unattributedLines: order.lines.filter((line) => line.variantId === null).length,
     lineTotalsDiverge:
       order.lines.length > 0 && !sum(merchandisePerLine).equals(grossSales.minus(discounts)),
   };

@@ -269,6 +269,65 @@ describe("loadFacts", () => {
     expect(report.warnings.map((warning) => warning.code)).not.toContain("refund_without_original_order");
   });
 
+  /**
+   * Cancelling an order and refunding it is routine. The cancelled order's revenue was never
+   * recognised, so subtracting its refund would take money off net revenue that was never
+   * added to it.
+   */
+  it("ignores a refund whose original order was cancelled", async () => {
+    const seed = baseSeed({
+      shopify_refunds: [
+        {
+          id: "refund-row-1",
+          organisation_id: ORGANISATION,
+          external_id: "gid://shopify/Refund/1",
+          order_id: "order-row-1",
+          processed_at: "2026-06-15T10:00:00.000Z",
+          total: "24.00",
+          tax: "4.00",
+          restocked: true,
+        },
+      ],
+    });
+    seed.shopify_orders[0].cancelled_at = "2026-06-14T00:00:00.000Z";
+    const { repository } = repositoryFor(seed);
+
+    const facts = await repository.loadFacts({ from: "2026-06-01", to: "2026-06-30" }, POLICY);
+    const report = buildReport(facts);
+
+    expect(facts.refunds).toHaveLength(0);
+    expect(report.summary.refunds.toNumber()).toBe(0);
+    expect(report.summary.netRevenue.toNumber()).toBe(0);
+    // The old fallback produced a refund pointing at a database UUID, which surfaced as a
+    // warning about a missing order rather than as the excluded order it actually was.
+    expect(report.warnings.map((warning) => warning.code)).not.toContain(
+      "refund_without_original_order",
+    );
+  });
+
+  it("keeps a refund whose original order is reportable", async () => {
+    const seed = baseSeed({
+      shopify_refunds: [
+        {
+          id: "refund-row-1",
+          organisation_id: ORGANISATION,
+          external_id: "gid://shopify/Refund/1",
+          order_id: "order-row-1",
+          processed_at: "2026-06-15T10:00:00.000Z",
+          total: "24.00",
+          tax: "4.00",
+          restocked: true,
+        },
+      ],
+    });
+    const { repository } = repositoryFor(seed);
+
+    const facts = await repository.loadFacts({ from: "2026-06-01", to: "2026-06-30" }, POLICY);
+
+    expect(facts.refunds).toHaveLength(1);
+    expect(facts.refunds[0].orderExternalId).toBe("gid://shopify/Order/1");
+  });
+
   it("takes VAT off a stored refund total, which is recorded inclusive", async () => {
     const seed = baseSeed({
       shopify_refunds: [
@@ -318,6 +377,36 @@ describe("buildReport", () => {
 
     expect(report.daily.map((row) => row.businessDate)).toEqual(["2026-06-09", "2026-06-10", "2026-06-11"]);
     expect(report.daily[0].netRevenue.toNumber()).toBe(0);
+  });
+
+  /**
+   * A line whose product no longer exists in Shopify resolves to no variant, so it can never
+   * carry a cost. Without this warning the margin simply reads high, with nothing to say a
+   * cost was missing rather than genuinely absent.
+   */
+  it("warns when a line has no variant, because it carries revenue but no cost", async () => {
+    const seed = baseSeed();
+    seed.shopify_order_lines[0].variant_id = null;
+    const { repository } = repositoryFor(seed);
+
+    const report = buildReport(
+      await repository.loadFacts({ from: "2026-06-10", to: "2026-06-10" }, POLICY),
+    );
+
+    expect(report.warnings.map((warning) => warning.code)).toContain("unattributed_order_lines");
+    // The symptom the warning exists to explain: revenue with no cost of goods behind it.
+    expect(report.daily[0].costs.productCogs.toNumber()).toBe(0);
+    expect(report.daily[0].netRevenue.toNumber()).toBe(40);
+  });
+
+  it("does not warn about unattributed lines when every line resolves", async () => {
+    const { repository } = repositoryFor(baseSeed());
+
+    const report = buildReport(
+      await repository.loadFacts({ from: "2026-06-10", to: "2026-06-10" }, POLICY),
+    );
+
+    expect(report.warnings.map((warning) => warning.code)).not.toContain("unattributed_order_lines");
   });
 
   it("reports a missing cost profile once for the period, not once per day", async () => {
