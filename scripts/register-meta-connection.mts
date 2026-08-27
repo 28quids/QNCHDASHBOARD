@@ -48,12 +48,44 @@ async function listAccounts(): Promise<MetaAdAccount[]> {
   }
 }
 
+/**
+ * What the token is actually permitted to do.
+ *
+ * An empty account list has two quite different causes that look identical: the token may
+ * lack `ads_read`, or it may have the scope but no ad account assigned to the system user.
+ * Asking Meta which scopes were granted separates them, instead of leaving both to guesswork.
+ */
+async function grantedScopes(): Promise<string[] | null> {
+  try {
+    const debug = await client.get<never>("debug_token", { input_token: accessToken });
+    const data = (debug as unknown as { data?: { scopes?: string[] } }).data;
+    return data?.scopes ?? null;
+  } catch {
+    // Diagnostic only — never fail the connect because the debug endpoint was unavailable.
+    return null;
+  }
+}
+
 const accounts = await listAccounts();
 
 if (accounts.length === 0) {
-  console.error("The token is valid but can see no ad accounts.");
-  console.error("Assign the ad account to the system user: Business settings > Users >");
-  console.error("System users > your user > Assign assets > Ad accounts > Manage campaigns.");
+  const scopes = await grantedScopes();
+  console.error("The token is valid but can see no ad accounts.\n");
+
+  if (scopes && !scopes.includes("ads_read")) {
+    console.error(`The token was granted: ${scopes.join(", ") || "(no scopes)"}`);
+    console.error("It is missing ads_read, so it cannot list ad accounts whatever is assigned.");
+    console.error("\nRe-generate the token: Business settings > Users > System users >");
+    console.error("your user > Generate new token > select your app > tick ads_read.");
+  } else {
+    if (scopes) console.error(`The token has the right scopes (${scopes.join(", ")}).`);
+    console.error("So the ad account has not been assigned to the system user.\n");
+    console.error("Business settings > Users > System users > your user > Assign assets >");
+    console.error("Ad accounts > select the account > enable 'View performance' (or");
+    console.error("'Manage campaigns') > Save changes. Then re-run this command.");
+    console.error("\nAssigning the *app* is not the same as assigning the *ad account*;");
+    console.error("both are needed, and the app assignment is the one already done.");
+  }
   process.exit(1);
 }
 
