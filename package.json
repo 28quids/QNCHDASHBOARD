@@ -21,7 +21,9 @@
     "probe:shopify": "tsx scripts/probe-shopify.mts",
     "backfill:shopify": "tsx scripts/backfill-shopify.mts",
     "reconcile:shopify": "tsx scripts/reconcile-shopify.mts",
-    "delete:orders-before": "node scripts/delete-orders-before.mjs"
+    "delete:orders-before": "node scripts/delete-orders-before.mjs",
+    "meta:connect": "tsx scripts/register-meta-connection.mts",
+    "backfill:meta": "tsx scripts/backfill-meta.mts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",

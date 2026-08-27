@@ -12,7 +12,15 @@ import pg from "pg";
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-/** Minimal .env parser: splits on the first `=` only, since base64 values contain padding. */
+/**
+ * Minimal .env parser: splits on the first `=` only, since base64 values contain padding.
+ *
+ * The return type is declared because TypeScript would otherwise infer `{}` from the empty
+ * case, and every `.mts` script reading an optional variable off it would fail to compile.
+ *
+ * @param {string} [path]
+ * @returns {Record<string, string | undefined>}
+ */
 export function loadEnvFile(path = join(ROOT, ".env.local")) {
   let contents;
   try {
@@ -20,6 +28,7 @@ export function loadEnvFile(path = join(ROOT, ".env.local")) {
   } catch {
     return {};
   }
+  /** @type {Record<string, string | undefined>} */
   const values = {};
   for (const line of contents.split("\n")) {
     const trimmed = line.trim();
