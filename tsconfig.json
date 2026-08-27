@@ -26,10 +26,7 @@
       ]
     },
     "allowJs": true,
-    "esModuleInterop": true,
-    // The operational scripts in scripts/ run under Node's native type stripping, which
-    // resolves no extensions of its own and so needs the explicit `.ts` in their imports.
-    "allowImportingTsExtensions": true
+    "esModuleInterop": true
   },
   "include": [
     "next-env.d.ts",

@@ -183,3 +183,13 @@ export const VARIANTS_QUERY = /* GraphQL */ `
 /** Shopify search syntax for "updated at or after this instant". */
 export const updatedSinceQuery = (since: string | null): string =>
   since ? `updated_at:>='${since}'` : "";
+
+/**
+ * Shopify search syntax for "created at or after this instant".
+ *
+ * For bounding an initial backfill to a period of trading. `updated_at` is the right filter
+ * for incremental syncs — an order refunded later must be re-read — but it is the wrong one
+ * for a window, because an old order edited inside the window would be pulled in with it.
+ */
+export const createdSinceQuery = (since: string | null): string =>
+  since ? `created_at:>='${since}'` : "";

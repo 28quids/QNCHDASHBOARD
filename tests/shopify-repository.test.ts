@@ -10,7 +10,7 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createShopifyRepository } from "@/lib/repositories/shopify-repository";
-import type { MoneyBag, ShopifyOrderNode } from "@/lib/connectors/shopify/types";
+import type { MoneyBag, ShopifyOrderNode, ShopifyVariantNode } from "@/lib/connectors/shopify/types";
 import { createFakeSupabase, type Row } from "./helpers/fake-supabase";
 
 const ORGANISATION_ID = "org-1";
@@ -209,6 +209,115 @@ describe("persistOrderBatch", () => {
 
     expect(result.orders).toBe(0);
     expect(tables.shopify_orders ?? []).toHaveLength(0);
+  });
+});
+
+describe("persistVariantBatch", () => {
+  const variantNode = (overrides: Partial<ShopifyVariantNode> = {}): ShopifyVariantNode => ({
+    id: "gid://shopify/ProductVariant/1",
+    sku: "0001",
+    title: "Real Orange",
+    updatedAt: "2026-08-01T10:00:00Z",
+    product: { id: "gid://shopify/Product/1", title: "QNCH Real Fruit Electrolytes", status: "ACTIVE" },
+    inventoryItem: {
+      inventoryLevels: {
+        nodes: [
+          {
+            location: { id: "gid://shopify/Location/1" },
+            quantities: [
+              { name: "available", quantity: 420 },
+              { name: "incoming", quantity: 1000 },
+            ],
+          },
+        ],
+      },
+    },
+    ...overrides,
+  });
+
+  it("writes the product before the variant that depends on it", async () => {
+    const { repository, tables } = setup();
+
+    const result = await repository.persistVariantBatch([variantNode()]);
+
+    expect(tables.products).toHaveLength(1);
+    expect(tables.product_variants[0].product_id).toBe(tables.products[0].id);
+    expect(result).toMatchObject({ products: 1, variants: 1 });
+  });
+
+  it("writes one product for several variants of it", async () => {
+    const { repository, tables } = setup();
+
+    await repository.persistVariantBatch([
+      variantNode(),
+      variantNode({ id: "gid://shopify/ProductVariant/2", sku: "0002", title: "Real Lemon" }),
+    ]);
+
+    expect(tables.products).toHaveLength(1);
+    expect(tables.product_variants).toHaveLength(2);
+  });
+
+  it("normalises an empty SKU to null rather than storing a blank", async () => {
+    // The live store returns "" for variants with no SKU. Stored as-is it would read as a
+    // real SKU that happens to be empty, and would group with every other blank.
+    const { repository, tables } = setup();
+
+    await repository.persistVariantBatch([variantNode({ sku: "" })]);
+
+    expect(tables.product_variants[0].sku).toBeNull();
+  });
+
+  it("reports variants with no product instead of dropping them silently", async () => {
+    const { repository, tables } = setup();
+
+    const result = await repository.persistVariantBatch([variantNode({ product: null })]);
+
+    expect(result.variantsWithoutProduct).toBe(1);
+    expect(tables.product_variants ?? []).toHaveLength(0);
+  });
+
+  it("records available and incoming stock per location", async () => {
+    const { repository, tables } = setup();
+
+    await repository.persistVariantBatch([variantNode()], "2026-08-26T00:00:00Z");
+
+    expect(tables.inventory_snapshots[0]).toMatchObject({
+      location_external_id: "gid://shopify/Location/1",
+      snapshot_at: "2026-08-26T00:00:00Z",
+      available_units: 420,
+      units_on_order: 1000,
+    });
+  });
+
+  it("uses one snapshot instant across a paged run", async () => {
+    // Two pages of the same sync must not produce two snapshots dated milliseconds apart,
+    // or stock cover would be computed against a split view of the same moment.
+    const { repository, tables } = setup();
+    const snapshotAt = "2026-08-26T00:00:00Z";
+
+    await repository.persistVariantBatch([variantNode()], snapshotAt);
+    await repository.persistVariantBatch(
+      [variantNode({ id: "gid://shopify/ProductVariant/2", sku: "0002" })],
+      snapshotAt,
+    );
+
+    expect(new Set(tables.inventory_snapshots.map((row) => row.snapshot_at)).size).toBe(1);
+  });
+
+  it("lets order lines resolve once the catalogue is synced", async () => {
+    // The ordering that matters: catalogue first, then orders.
+    const { repository, tables } = setup();
+
+    await repository.persistVariantBatch([variantNode()]);
+    const result = await repository.persistOrderBatch([order()], options);
+
+    expect(result.unresolvedVariants).toBe(0);
+    expect(tables.shopify_order_lines[0].variant_id).toBe(tables.product_variants[0].id);
+  });
+
+  it("does nothing on an empty page", async () => {
+    const { repository } = setup();
+    expect(await repository.persistVariantBatch([])).toMatchObject({ products: 0, variants: 0 });
   });
 });
 

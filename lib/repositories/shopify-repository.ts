@@ -21,7 +21,12 @@ import {
   normaliseOrderBatch,
   type ShopifyNormalisationOptions,
 } from "@/lib/connectors/shopify/normalise";
-import type { MoneyBag, ShopifyOrderNode, ShopifyRefundNode } from "@/lib/connectors/shopify/types";
+import type {
+  MoneyBag,
+  ShopifyOrderNode,
+  ShopifyRefundNode,
+  ShopifyVariantNode,
+} from "@/lib/connectors/shopify/types";
 
 export interface ShopifyRepositoryContext {
   organisationId: string;
@@ -33,6 +38,14 @@ const bagAmount = (bag: MoneyBag): string => amount(bag.shopMoney.amount);
 
 const distinct = <T>(values: readonly (T | null | undefined)[]): T[] =>
   Array.from(new Set(values.filter((value): value is T => value !== null && value !== undefined)));
+
+export interface PersistVariantBatchResult {
+  products: number;
+  variants: number;
+  inventorySnapshots: number;
+  /** Variants Shopify returned with no product. They cannot be written: product_id is NOT NULL. */
+  variantsWithoutProduct: number;
+}
 
 export interface PersistOrderBatchResult {
   orders: number;
@@ -145,6 +158,108 @@ export function createShopifyRepository(client: SupabaseClient, context: Shopify
 
   return {
     /**
+     * Writes one page of the product catalogue.
+     *
+     * Must run before an order backfill. Order lines resolve their variant by looking it up
+     * here, so syncing orders into an empty catalogue writes every line with a null
+     * variant_id and no SKU-level reporting is possible.
+     */
+    async persistVariantBatch(
+      nodes: readonly ShopifyVariantNode[],
+      snapshotAt: string = new Date().toISOString(),
+    ): Promise<PersistVariantBatchResult> {
+      if (nodes.length === 0) {
+        return { products: 0, variants: 0, inventorySnapshots: 0, variantsWithoutProduct: 0 };
+      }
+
+      // A variant row requires a product, so a variant Shopify returns without one cannot be
+      // written. Counted rather than dropped silently.
+      const withProduct = nodes.filter((node) => node.product !== null);
+      const variantsWithoutProduct = nodes.length - withProduct.length;
+
+      const productRows = [...new Map(withProduct.map((node) => [node.product!.id, node])).values()].map(
+        (node) => ({
+          organisation_id: organisationId,
+          source: "shopify",
+          external_id: node.product!.id,
+          title: node.product!.title,
+          status: node.product!.status,
+          source_updated_at: node.updatedAt,
+        }),
+      );
+
+      const { data: writtenProducts, error: productError } = await client
+        .from("products")
+        .upsert(productRows, { onConflict: "organisation_id,source,external_id" })
+        .select("id, external_id");
+      if (productError) throw productError;
+
+      const productIds = new Map(
+        (writtenProducts ?? []).map((row) => [row.external_id as string, row.id as string]),
+      );
+
+      const variantRows = withProduct.flatMap((node) => {
+        const productId = productIds.get(node.product!.id);
+        if (!productId) return [];
+        return [
+          {
+            organisation_id: organisationId,
+            product_id: productId,
+            source: "shopify",
+            external_id: node.id,
+            sku: node.sku === "" ? null : node.sku,
+            title: node.title,
+            source_updated_at: node.updatedAt,
+          },
+        ];
+      });
+
+      const { data: writtenVariants, error: variantError } = await client
+        .from("product_variants")
+        .upsert(variantRows, { onConflict: "organisation_id,source,external_id" })
+        .select("id, external_id");
+      if (variantError) throw variantError;
+
+      const variantIds = new Map(
+        (writtenVariants ?? []).map((row) => [row.external_id as string, row.id as string]),
+      );
+
+      const inventoryRows = withProduct.flatMap((node) => {
+        const variantId = variantIds.get(node.id);
+        const levels = node.inventoryItem?.inventoryLevels.nodes ?? [];
+        if (!variantId || levels.length === 0) return [];
+
+        return levels.map((level) => {
+          const quantityOf = (name: string) =>
+            level.quantities.find((quantity) => quantity.name === name)?.quantity ?? 0;
+          return {
+            organisation_id: organisationId,
+            variant_id: variantId,
+            location_external_id: level.location.id,
+            snapshot_at: snapshotAt,
+            available_units: quantityOf("available"),
+            units_on_order: quantityOf("incoming"),
+            source_updated_at: node.updatedAt,
+          };
+        });
+      });
+
+      if (inventoryRows.length > 0) {
+        const { error } = await client
+          .from("inventory_snapshots")
+          .upsert(inventoryRows, { onConflict: "organisation_id,variant_id,location_external_id,snapshot_at" });
+        if (error) throw error;
+      }
+
+      return {
+        products: productRows.length,
+        variants: variantRows.length,
+        inventorySnapshots: inventoryRows.length,
+        variantsWithoutProduct,
+      };
+    },
+
+    /**
      * Writes one page of orders and everything hanging off them. Returns per-table counts so
      * a caller can report what a sync actually changed.
      */
@@ -205,6 +320,10 @@ export function createShopifyRepository(client: SupabaseClient, context: Shopify
           ordered_at: node.processedAt ?? node.createdAt,
           processed_at: node.processedAt,
           financial_status: node.displayFinancialStatus,
+          // Stored so that everything reading orders back can apply the same exclusion rule
+          // the normaliser applies here. Without them a test order re-enters the P&L.
+          is_test: node.test,
+          cancelled_at: node.cancelledAt,
           gross_sales: amount(normalised.grossSales),
           discounts: amount(normalised.discounts),
           refunds: amount(refundedByOrder.get(node.id) ?? ZERO),

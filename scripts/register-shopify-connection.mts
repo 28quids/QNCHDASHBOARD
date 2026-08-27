@@ -6,17 +6,16 @@
  * missing scope fails here rather than half way through a backfill. It is read from
  * .env.local and never printed.
  *
- *   node scripts/register-shopify-connection.mts
+ *   npm run shopify:connect
  *
- * Run with Node 23, which strips TypeScript natively — this imports the real encryptToken
- * rather than reimplementing AES-256-GCM in a second place where it could drift. The .mts
- * extension marks the file as ESM without forcing "type": "module" onto the package, which
- * would change how every other .js file in the project is interpreted.
+ * Run through tsx, which resolves the `@/` alias the rest of the codebase uses. That lets
+ * this import the real encryptToken rather than reimplementing AES-256-GCM in a second
+ * place where it could drift.
  */
 
 import { connect, loadEnvFile, requireEnv } from "./lib/db.mjs";
-import { encryptToken, CURRENT_KEY_VERSION } from "../lib/connectors/crypto.ts";
-import { SHOPIFY_API_VERSION } from "../lib/connectors/shopify/queries.ts";
+import { encryptToken, CURRENT_KEY_VERSION } from "@/lib/connectors/crypto";
+import { SHOPIFY_API_VERSION } from "@/lib/connectors/shopify/queries";
 
 const env = loadEnvFile();
 const shopDomain = requireEnv("SHOPIFY_SHOP_DOMAIN", env);
