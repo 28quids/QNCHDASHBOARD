@@ -11,7 +11,15 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "migrate": "node scripts/migrate.mjs",
-    "migrate:status": "node scripts/migrate.mjs --status"
+    "migrate:status": "node scripts/migrate.mjs --status",
+    "verify:schema": "node scripts/verify-schema.mjs",
+    "show:tenant": "node scripts/show-tenant.mjs",
+    "seed:policy": "node scripts/seed-financial-policy.mjs",
+    "calculate": "tsx scripts/calculate-financials.mts",
+    "grant:access": "node scripts/grant-access.mjs",
+    "shopify:connect": "tsx scripts/register-shopify-connection.mts",
+    "probe:shopify": "tsx scripts/probe-shopify.mts",
+    "backfill:shopify": "tsx scripts/backfill-shopify.mts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
@@ -29,6 +37,7 @@
     "eslint": "^9.38.0",
     "eslint-config-next": "^16.0.1",
     "pg": "^8.23.0",
+    "tsx": "^4.23.12",
     "typescript": "^5.9.3",
     "vitest": "^4.0.8"
   }

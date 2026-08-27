@@ -91,6 +91,23 @@ The engine stays pure. Everything that touches the database lives outside it.
 | `lib/connectors/supabase-sync-store.ts` | Run claiming, cursors and outcomes for `runSync` |
 | `lib/repositories/shopify-repository.ts` | Normalised Shopify data into rows |
 | `lib/connectors/shopify/sync.ts` | Builds the runnable order sync from the three parts |
+| `lib/reporting/reporting-repository.ts` | Stored rows back into engine inputs |
+| `lib/reporting/report.ts` | Composes one consistent set of facts into every figure |
+| `lib/reporting/persist.ts` | Publishes a calculated period, versioned |
+| `lib/reporting/calculate.ts` | The job shared by the cron route and the script |
+
+**Business dates are computed in TypeScript, not SQL.** PostgREST cannot express
+`at time zone`, so the reporting layer fetches a UTC window padded by a day and filters on the
+business date. Filtering on UTC alone would move a 00:30 BST order into the previous day.
+
+**Refunds pull their original order in, even from outside the range.** Reversing the cost of a
+refunded unit needs the cost profile in force on the *original* order date, so those orders are
+loaded explicitly. They produce no rows of their own — only dates in the range are emitted — so
+they add cost basis without adding revenue.
+
+**An unapproved policy is not a zero.** `loadPolicy` returns the specific outstanding decisions
+rather than falling back to a default, and the dashboard shows them instead of figures. With no
+approved costs every contribution line would equal revenue, which reads as profit.
 
 **Two shapes per order, not one.** `normaliseOrder` produces the engine's VAT-exclusive
 inputs and drops what the calculation does not need — the timestamp, the currency, the tax

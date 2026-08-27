@@ -9,6 +9,8 @@ const serverEnvironmentSchema = publicEnvironmentSchema.extend({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(20),
   TOKEN_ENCRYPTION_KEY: z.string().min(32),
   CRON_SECRET: z.string().min(32),
+  /** The tenant every server-side query is scoped to. Every table is keyed on it. */
+  ORGANISATION_ID: z.uuid(),
 });
 
 export function getPublicEnvironment() {
@@ -24,5 +26,6 @@ export function getServerEnvironment() {
     SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
     TOKEN_ENCRYPTION_KEY: process.env.TOKEN_ENCRYPTION_KEY,
     CRON_SECRET: process.env.CRON_SECRET,
+    ORGANISATION_ID: process.env.ORGANISATION_ID,
   });
 }
