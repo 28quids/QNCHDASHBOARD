@@ -2,6 +2,7 @@ import Decimal from "decimal.js";
 import { describe, expect, it } from "vitest";
 import { activeAlerts, evaluateMetric, evaluateMetrics, overallStatus, type MetricTarget } from "../lib/monitoring/targets";
 import {
+  checkAdAccountTimezone,
   checkDateCoverage,
   checkExpenseMappingCoverage,
   checkFinancialPolicyApproved,
@@ -240,3 +241,44 @@ describe("reconciliation", () => {
     expect(summary.status).toBe("needs_review");
   });
 });
+
+describe("advertising timezone", () => {
+  /**
+   * Meta returns a date already resolved in the ad account's timezone, so there is no
+   * timestamp left to convert. A mismatch measures a day's spend over a different window
+   * than that day's revenue.
+   */
+  it("warns when an ad account reports on a different day boundary", () => {
+    const result = checkAdAccountTimezone(
+      [{ platform: "meta", externalId: "act_1", timezone: "UTC" }],
+      "Europe/London",
+    );
+
+    expect(result).toMatchObject({ status: "warn", severity: "amber" });
+    expect(result.message).toContain("meta (UTC)");
+    // Period totals still reconcile; only the daily split is offset.
+    expect(result.message).toContain("period totals are unaffected");
+  });
+
+  it("passes when every ad account matches the business timezone", () => {
+    const result = checkAdAccountTimezone(
+      [{ platform: "meta", externalId: "act_1", timezone: "Europe/London" }],
+      "Europe/London",
+    );
+
+    expect(result.status).toBe("pass");
+  });
+
+  it("passes rather than warns when no advertising account is connected", () => {
+    expect(checkAdAccountTimezone([], "Europe/London").status).toBe("pass");
+  });
+
+  it("ignores an account whose timezone was never recorded", () => {
+    const result = checkAdAccountTimezone(
+      [{ platform: "tiktok", externalId: "1", timezone: null }],
+      "Europe/London",
+    );
+
+    expect(result.status).toBe("pass");
+  });
+})

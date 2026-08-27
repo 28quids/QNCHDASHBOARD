@@ -144,6 +144,61 @@ export function checkExpenseMappingCoverage(
   };
 }
 
+export interface AdAccountTimezone {
+  platform: string;
+  externalId: string;
+  timezone: string | null;
+}
+
+/**
+ * Advertising spend is dated in the ad account's own timezone, not QNCH's.
+ *
+ * Meta returns `date_start` as a date already resolved in the account's timezone, so there is
+ * no timestamp left to convert. When the two disagree, a day's spend is measured over a
+ * different window than that day's revenue, and daily MER and CAC carry an offset.
+ *
+ * Reported as a warning rather than corrected, because correcting it is not possible after
+ * the fact: an ad account's timezone is fixed when the account is created, and reallocating
+ * a daily total across a boundary would mean inventing an hourly distribution.
+ */
+export function checkAdAccountTimezone(
+  accounts: readonly AdAccountTimezone[],
+  businessTimezone: string,
+): DataQualityResult {
+  const mismatched = accounts.filter(
+    (account) => account.timezone !== null && account.timezone !== businessTimezone,
+  );
+
+  if (accounts.length === 0) {
+    return {
+      checkKey: "advertising.timezone",
+      status: "pass",
+      severity: "green",
+      message: "No advertising accounts connected",
+    };
+  }
+
+  if (mismatched.length === 0) {
+    return {
+      checkKey: "advertising.timezone",
+      status: "pass",
+      severity: "green",
+      message: `All ad accounts report in ${businessTimezone}`,
+    };
+  }
+
+  return {
+    checkKey: "advertising.timezone",
+    status: "warn",
+    severity: "amber",
+    message:
+      `${mismatched.map((account) => `${account.platform} (${account.timezone})`).join(", ")} ` +
+      `report on a different day boundary than ${businessTimezone}. Daily spend is offset ` +
+      `against daily revenue; period totals are unaffected.`,
+    observed: { businessTimezone, accounts: mismatched },
+  };
+}
+
 /** Blocks official reporting until QNCH has approved the financial policy. */
 export function checkFinancialPolicyApproved(status: "draft" | "approved"): DataQualityResult {
   return status === "approved"

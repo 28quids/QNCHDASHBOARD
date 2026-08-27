@@ -2,6 +2,7 @@ import { requireSession } from "@/lib/auth/current-user";
 import { createReportingRepository } from "@/lib/reporting/reporting-repository";
 import { loadFullHistory } from "@/lib/reporting/dashboard-data";
 import {
+  checkAdAccountTimezone,
   checkFinancialPolicyApproved,
   checkSyncFreshness,
   checkVariantCostCoverage,
@@ -35,7 +36,7 @@ export default async function DataQualityPage() {
     businessTimezone: session.businessTimezone,
   });
 
-  const [{ data: connections }, { data: settings }, { data: published }, policy, context] =
+  const [{ data: connections }, { data: settings }, { data: published }, { data: adAccounts }, policy, context] =
     await Promise.all([
       session.client
         .from("integration_connections")
@@ -53,6 +54,10 @@ export default async function DataQualityPage() {
         .eq("is_current", true)
         .order("business_date", { ascending: false })
         .limit(1),
+      session.client
+        .from("ad_accounts")
+        .select("platform, external_id, timezone")
+        .eq("organisation_id", session.organisationId),
       repository.loadPolicy(),
       repository.loadAllocationContext(),
     ]);
@@ -73,6 +78,14 @@ export default async function DataQualityPage() {
       (settings?.financial_policy_status as "draft" | "approved" | undefined) ?? "draft",
     ),
     ...checkSyncFreshness(syncStates, new Date(), MAXIMUM_SYNC_AGE_HOURS),
+    checkAdAccountTimezone(
+      (adAccounts ?? []).map((row) => ({
+        platform: row.platform as string,
+        externalId: row.external_id as string,
+        timezone: (row.timezone as string | null) ?? null,
+      })),
+      session.businessTimezone,
+    ),
   ];
 
   // Cost coverage can only be checked once the policy allows the engine to run at all.
