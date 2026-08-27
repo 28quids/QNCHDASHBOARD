@@ -5,6 +5,11 @@
  * The comparison is constant-time so the endpoint cannot be used to recover the secret one
  * character at a time.
  *
+ * It fetches from every connected provider and then recalculates. An earlier version only
+ * recalculated, which meant the nightly run recomputed the same stored facts and reported
+ * success while never importing an order or a pound of spend that arrived after the last
+ * manual backfill.
+ *
  * Recalculation deliberately covers a trailing window rather than only yesterday. A refund
  * processed today lands on today's P&L, but an order edited in Shopify changes a past day, and
  * a cost restated in settings changes every day it applies to. Recomputing only the last day
@@ -15,14 +20,11 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getServerEnvironment } from "@/lib/env";
-import { calculateAndPublish } from "@/lib/reporting/calculate";
-import { addDays, toBusinessDate } from "@/lib/financial/dates";
+import { refreshEverything } from "@/lib/connectors/pipeline";
+import { toBusinessDate } from "@/lib/financial/dates";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
-
-/** Days of history republished on every run, to pick up late refunds and restated costs. */
-const RECALCULATION_WINDOW_DAYS = 45;
 
 function isAuthorised(request: NextRequest, secret: string): boolean {
   const header = request.headers.get("authorization") ?? "";
@@ -61,25 +63,41 @@ async function handle(request: NextRequest) {
   }
 
   const businessTimezone = organisation.business_timezone as string;
-  const today = toBusinessDate(new Date(), businessTimezone);
-  const range = { from: addDays(today, -(RECALCULATION_WINDOW_DAYS - 1)), to: today };
 
-  const result = await calculateAndPublish(client, { organisationId, businessTimezone, range });
+  const result = await refreshEverything(client, {
+    organisationId,
+    businessTimezone,
+    encryptionKey: environment.TOKEN_ENCRYPTION_KEY,
+    // Dated, so a retried cron on the same day is a deliberate no-op rather than a re-import.
+    jobDiscriminator: toBusinessDate(new Date(), businessTimezone),
+  });
 
-  if (result.status === "not_approved") {
+  const syncs = result.syncs.map((sync) => ({
+    provider: sync.provider,
+    resource: sync.resource,
+    status: sync.outcome.status,
+    written: sync.outcome.status === "failed" || sync.outcome.status === "succeeded" ? sync.outcome.written : 0,
+    error: sync.outcome.status === "failed" ? sync.outcome.error.message : undefined,
+  }));
+
+  if (result.calculation?.status === "not_approved") {
     // Not an error: the job ran correctly and correctly declined to publish.
     return NextResponse.json(
-      { status: "skipped", reason: "financial_policy_not_approved", missing: result.missing },
+      { status: "skipped", reason: "financial_policy_not_approved", missing: result.calculation.missing, syncs },
       { status: 200 },
     );
   }
 
   return NextResponse.json({
-    status: "ok",
-    range,
-    published: result.published,
-    orders: result.report.summary.orders,
-    netRevenue: result.report.summary.netRevenue.toFixed(2),
-    warnings: result.report.warnings,
+    // A provider that failed must not be reported as a clean run, even though the
+    // recalculation still went ahead on whatever did arrive.
+    status: result.allSucceeded ? "ok" : "partial",
+    syncs,
+    published: result.calculation?.status === "calculated" ? result.calculation.published : null,
+    orders: result.calculation?.status === "calculated" ? result.calculation.report.summary.orders : null,
+    netRevenue:
+      result.calculation?.status === "calculated"
+        ? result.calculation.report.summary.netRevenue.toFixed(2)
+        : null,
   });
 }

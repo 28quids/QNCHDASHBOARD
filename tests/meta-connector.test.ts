@@ -238,7 +238,12 @@ describe("the insights sync", () => {
     expect(tables.ad_daily_metrics[0].spend).toBe("130.0000");
   });
 
-  it("still records spend when the campaign behind a row has not been synced", async () => {
+  /**
+   * A null entity_id means "account level", and the account row for that day already carries
+   * this spend. Writing an unresolved campaign row with a null entity filed it in the same
+   * bucket and the P&L counted the spend twice — it read £8,145 against £5,133 of real spend.
+   */
+  it("skips an entity row whose campaign has not been synced, rather than filing it as account level", async () => {
     const { client: supabase, tables } = createFakeSupabase(seed());
     const repository = createMetaRepository(supabase as unknown as SupabaseClient, {
       organisationId: ORGANISATION,
@@ -248,9 +253,24 @@ describe("the insights sync", () => {
       normaliseInsight({ ...INSIGHT, campaign_id: "not-synced-yet" }, "campaign"),
     ]);
 
-    // Reported, not dropped: the spend reaches the P&L even though it cannot be attributed.
-    expect(result).toMatchObject({ rows: 1, unresolvedEntities: 1 });
-    expect(tables.ad_daily_metrics[0].entity_id).toBeNull();
+    expect(result).toMatchObject({ rows: 0, skippedUnresolvedEntities: 1 });
+    expect(tables.ad_daily_metrics).toHaveLength(0);
+  });
+
+  it("does not let a skipped entity row disturb the account row for the same day", async () => {
+    const { client: supabase, tables } = createFakeSupabase(seed());
+    const repository = createMetaRepository(supabase as unknown as SupabaseClient, {
+      organisationId: ORGANISATION,
+    });
+
+    await repository.persistInsights(ACCOUNT_ROW, [normaliseInsight(INSIGHT, "account")]);
+    await repository.persistInsights(ACCOUNT_ROW, [
+      normaliseInsight({ ...INSIGHT, campaign_id: "not-synced-yet" }, "campaign"),
+    ]);
+
+    // Exactly one row, carrying the account-level figure and nothing added on top of it.
+    expect(tables.ad_daily_metrics).toHaveLength(1);
+    expect(tables.ad_daily_metrics[0].spend).toBe("125.5000");
   });
 
   it("resolves an entity that has already been synced", async () => {
@@ -267,7 +287,7 @@ describe("the insights sync", () => {
       normaliseInsight({ ...INSIGHT, campaign_id: "23847" }, "campaign"),
     ]);
 
-    expect(result.unresolvedEntities).toBe(0);
+    expect(result.skippedUnresolvedEntities).toBe(0);
     expect(tables.ad_daily_metrics[0].entity_id).toBe("entity-1");
   });
 

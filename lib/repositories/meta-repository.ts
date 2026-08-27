@@ -25,11 +25,14 @@ export interface MetaRepositoryContext {
 export interface PersistInsightsResult {
   rows: number;
   /**
-   * Entity-level rows whose campaign, ad set or ad is not in `ad_entities` yet. They are
-   * written against the account with a null entity rather than dropped, so their spend still
-   * reaches the P&L even when the hierarchy sync has not caught up.
+   * Entity-level rows whose campaign, ad set or ad is not in `ad_entities` yet.
+   *
+   * These are **skipped**, not written. Writing them with a null entity_id would file them as
+   * account-level rows, and the account-level row for that day already contains their spend —
+   * so the P&L would count it twice. Their absence costs only breakdown detail; their
+   * presence corrupted the total.
    */
-  unresolvedEntities: number;
+  skippedUnresolvedEntities: number;
 }
 
 export interface EntityUpsert {
@@ -97,19 +100,30 @@ export function createMetaRepository(client: SupabaseClient, context: MetaReposi
       adAccountId: string,
       insights: readonly NormalisedMetaInsight[],
     ): Promise<PersistInsightsResult> {
-      if (insights.length === 0) return { rows: 0, unresolvedEntities: 0 };
+      if (insights.length === 0) return { rows: 0, skippedUnresolvedEntities: 0 };
 
       const entityIds = await resolveEntities(adAccountId, insights);
-      let unresolvedEntities = 0;
+      let skippedUnresolvedEntities = 0;
 
-      const rows = insights.map((insight) => {
+      const rows = insights.flatMap((insight) => {
         let entityId: string | null = null;
+
         if (insight.entityExternalId) {
           entityId = entityIds.get(insight.entityExternalId) ?? null;
-          if (entityId === null) unresolvedEntities += 1;
+          if (entityId === null) {
+            // Dropped deliberately. A null entity_id means "account level", and that row
+            // already carries this spend; writing it here would double count it.
+            skippedUnresolvedEntities += 1;
+            return [];
+          }
+        } else if (insight.level !== "account") {
+          // A row below account level that Meta returned without its identifier. It cannot be
+          // attributed, and the account row covers it, so it is not written either.
+          skippedUnresolvedEntities += 1;
+          return [];
         }
 
-        return {
+        return [{
           organisation_id: organisationId,
           ad_account_id: adAccountId,
           entity_id: entityId,
@@ -126,17 +140,21 @@ export function createMetaRepository(client: SupabaseClient, context: MetaReposi
           purchases: insight.purchases,
           purchase_value: insight.purchaseValue,
           raw_metrics: insight.raw,
-        };
+        }];
       });
+
+      if (rows.length === 0) return { rows: 0, skippedUnresolvedEntities };
 
       const { error } = await client
         .from("ad_daily_metrics")
         .upsert(rows, {
+          // Matches the `nulls not distinct` index from migration 0007, without which the
+          // account-level row inserts afresh on every sync instead of updating.
           onConflict: "ad_account_id,entity_id,metric_date,attribution_window,breakdown_key",
         });
       if (error) throw error;
 
-      return { rows: rows.length, unresolvedEntities };
+      return { rows: rows.length, skippedUnresolvedEntities };
     },
   };
 

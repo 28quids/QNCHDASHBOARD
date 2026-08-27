@@ -14,6 +14,7 @@ import {
 import { toBusinessDate } from "@/lib/financial/dates";
 import { relativeTime } from "@/lib/reporting/format";
 import { StatusPill } from "../../components/metric";
+import { RefreshButton } from "../../components/refresh-button";
 
 export const dynamic = "force-dynamic";
 
@@ -104,6 +105,8 @@ export default async function DataQualityPage() {
     <>
       <p className="eyebrow">QNCH · AS AT {today}</p>
       <h1 className="title-sm">Data quality</h1>
+
+      <RefreshButton />
 
       <div className={`banner${summary.severity === "red" ? " red" : ""}`}>
         <h3>

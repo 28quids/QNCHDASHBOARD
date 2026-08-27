@@ -2,8 +2,9 @@
  * Imports Meta advertising data.
  *
  * The hierarchy syncs first, then insights at each level. That order matters: an insight row
- * whose campaign is not yet in `ad_entities` is written against the account with a null
- * entity, so its spend still reaches the P&L but cannot be attributed in the breakdown.
+ * whose campaign is not yet in `ad_entities` is skipped, so it is missing from the breakdown
+ * until the hierarchy catches up. Its spend still reaches the P&L, because the account-level
+ * row for that day already contains it.
  *
  *   npm run backfill:meta -- --dry-run           # fetch and report, write nothing
  *   npm run backfill:meta -- --since 2026-01-01
@@ -161,7 +162,7 @@ for (const level of levels) {
       level,
       jobDiscriminator: `${level}_${discriminator}`,
       onPagePersisted: (result) => {
-        unresolved += result.unresolvedEntities;
+        unresolved += result.skippedUnresolvedEntities;
         console.log(`  +${result.rows} rows`);
       },
     }),
@@ -172,7 +173,7 @@ for (const level of levels) {
   if (outcome.status === "succeeded") {
     console.log(`  pages ${outcome.pages}, received ${outcome.received}, written ${outcome.written}`);
     if (unresolved > 0) {
-      console.log(`  ${unresolved} row(s) could not be attributed to a synced entity`);
+      console.log(`  ${unresolved} row(s) skipped: no synced entity. Spend is in the account row.`);
     }
   }
   if (outcome.status === "failed") console.error(`  ${outcome.error.message}`);

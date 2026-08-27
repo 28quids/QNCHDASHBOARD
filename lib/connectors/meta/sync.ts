@@ -42,7 +42,7 @@ export interface MetaInsightsSyncOptions {
    */
   level: MetaEntityLevel | "account";
   jobDiscriminator: string;
-  onPagePersisted?: (result: { rows: number; unresolvedEntities: number }) => void;
+  onPagePersisted?: (result: { rows: number; skippedUnresolvedEntities: number }) => void;
 }
 
 export function buildMetaInsightsSyncJob(options: MetaInsightsSyncOptions): SyncJob<NormalisedMetaInsight> {
@@ -94,8 +94,8 @@ export interface MetaHierarchySyncOptions {
  * Syncs campaigns, ad sets and ads.
  *
  * Run before the entity-level insight syncs. An insight row whose entity is not in
- * `ad_entities` is written against the account with a null entity, so its spend still reaches
- * the P&L, but it cannot be attributed to a campaign in the breakdown.
+ * `ad_entities` is skipped, so the breakdown loses that row until the hierarchy catches up.
+ * Its spend is not lost — the account-level row for that day already contains it.
  */
 export function buildMetaHierarchySyncJob(options: MetaHierarchySyncOptions): SyncJob<EntityUpsert> {
   return {

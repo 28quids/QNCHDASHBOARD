@@ -146,3 +146,13 @@ button.link:hover { color: var(--ink); }
 ol.setup { list-style: none; margin: 0; padding: 0; }
 ol.setup li { display: flex; gap: 1.25rem; padding: 0.85rem 0; border-top: 1px solid var(--line); color: var(--muted); }
 ol.setup li span { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+/* Manual refresh --------------------------------------------------------------- */
+
+.refresh { margin-bottom: 2rem; }
+.refresh form { display: inline-block; }
+.refresh > p { margin: 0.75rem 0 0; }
+.refresh-result { margin-top: 1rem; border-left: 2px solid currentColor; padding: 0.25rem 0 0.25rem 1rem; }
+.refresh-result p { margin: 0 0 0.5rem; }
+.refresh-result ul { margin: 0; padding-left: 1.1rem; }
+.refresh-result li { padding: 0.15rem 0; }
