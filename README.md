@@ -167,14 +167,68 @@ npm run grant:access -- someone@example.com viewer
 npm run grant:access -- --list
 ```
 
+## Deploying to Vercel
+
+Supabase is already hosted, so only the Next.js application needs deploying.
+
+1. Push this repository to GitHub, then **vercel.com → Add New → Project** and import it.
+2. Set the build command override to `npm install --legacy-peer-deps && npm run build`. The
+   default `npm install` fails on the current peer tree.
+3. Add every variable from the table above as an **Environment Variable**, for Production.
+   `SUPABASE_DB_URL` is not needed — it is only used by the local migration scripts.
+4. Deploy. The cron in `vercel.json` runs `/api/cron/daily` at 03:00 UTC and Vercel supplies
+   the `CRON_SECRET` bearer token automatically.
+
+Nothing needs to change in Supabase: the deployment connects to the same project the local
+environment does, so the data is the same data.
+
+### Giving someone else access
+
+Two steps, and both are required — the first alone grants nothing.
+
+1. **Supabase → Authentication → Users → Add user**, with their email. Tick *Auto Confirm*,
+   or they cannot sign in however correct their password is.
+2. `npm run grant:access -- them@example.com viewer`
+
+Roles: `owner` and `finance_admin` may edit costs, targets and policy; `operator` and `viewer`
+read only. Membership is what every row-level security policy checks, so an account without it
+signs in successfully and sees nothing.
+
+Then `npm run set:password -- them@example.com`, or let them use the Supabase password-reset
+email.
+
 ## Scheduled refresh
 
 `POST` or `GET` `/api/cron/daily`, authenticated with `CRON_SECRET` as a bearer token. Vercel
 Cron is configured in `vercel.json` for 03:00 daily and supplies that header automatically.
 
+It **fetches from every connected provider and then recalculates** — Shopify catalogue and
+orders, Meta hierarchy and insights, then the contribution walk. The same pipeline is behind
+the **Refresh now** button on the data-quality page, so a manual refresh and the nightly one
+cannot drift apart.
+
+Providers run in sequence and one failing does not stop the others: Meta being down must not
+prevent Shopify orders importing. A run where any provider failed reports `partial`, never
+`ok`, and the per-provider outcome is shown rather than collapsed into a single tick.
+
 It republishes a trailing 45-day window rather than only yesterday: a refund processed today
 lands on today, but an order edited in Shopify changes a past day, and a restated cost changes
 every day it applies to. Recomputing one day would leave those corrections unpublished.
+
+Meta is re-fetched over a trailing week on every run, because it restates conversions for
+several days as attribution settles. The upsert makes that converge rather than accumulate.
+
+## Inventory settings
+
+```
+npm run seed:inventory -- --lead-time 28    # supplier lead time, all variants
+npm run seed:inventory -- --list
+```
+
+Without a lead time no reorder alert can fire. A variant is flagged when its days of cover
+fall to or below the lead time — the point at which ordering today still beats the stockout.
+A fixed reorder point in units is optional and off by default, because the lead-time rule
+adapts to how fast a SKU is actually selling and a unit threshold does not.
 
 ## Guardrails
 

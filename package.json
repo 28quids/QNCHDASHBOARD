@@ -24,7 +24,8 @@
     "delete:orders-before": "node scripts/delete-orders-before.mjs",
     "meta:connect": "tsx scripts/register-meta-connection.mts",
     "backfill:meta": "tsx scripts/backfill-meta.mts",
-    "set:password": "node scripts/set-dashboard-password.mjs"
+    "set:password": "node scripts/set-dashboard-password.mjs",
+    "seed:inventory": "node scripts/seed-inventory-settings.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
