@@ -35,9 +35,10 @@ function orderNode(id: number, overrides: Partial<ShopifyOrderNode> = {}): Shopi
     displayFinancialStatus: "PAID",
     customer: { id: `gid://shopify/Customer/${id}` },
     totalDiscountsSet: bag("0.00"),
+    totalPriceSet: bag("33.95"),
     totalShippingPriceSet: bag("3.95"),
     totalTaxSet: bag("5.66"),
-    shippingLines: { nodes: [{ taxLines: [{ priceSet: bag("0.66") }] }] },
+    shippingLines: { nodes: [{ taxLines: [{ priceSet: bag("0.66") }], discountAllocations: [] }] },
     lineItems: {
       nodes: [
         {
@@ -46,7 +47,7 @@ function orderNode(id: number, overrides: Partial<ShopifyOrderNode> = {}): Shopi
           sku: "ORANGE-30",
           variant: { id: "gid://shopify/ProductVariant/1" },
           originalTotalSet: bag("30.00"),
-          discountedTotalSet: bag("30.00"),
+          discountAllocations: [],
           taxLines: [{ priceSet: bag("5.00") }],
         },
       ],

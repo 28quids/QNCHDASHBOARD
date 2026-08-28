@@ -148,6 +148,25 @@ try {
     printTable(driftRows);
   }
 
+  // Internal consistency is not enough: lines can sum to an order total that is itself wrong.
+  // This compares the assembled figure against what the customer was actually charged.
+  console.log("");
+  if (batch.totalMismatches.length === 0) {
+    console.log("Every order's gross, discounts, shipping and tax add back to the total charged.");
+  } else {
+    console.log(`${batch.totalMismatches.length} order(s) do not add back to the total charged:`);
+    printTable(
+      batch.totalMismatches.slice(0, 20).map((mismatch) => ({
+        order: mismatch.name,
+        date: mismatch.businessDate,
+        derived: mismatch.derived.toFixed(2),
+        charged: mismatch.charged.toFixed(2),
+        difference: mismatch.difference.toFixed(2),
+      })),
+    );
+    process.exitCode = 1;
+  }
+
   const unmatched = rows.filter((row) => row.status === "UNMATCHED");
   if (unmatched.length > 0) process.exitCode = 1;
   void ZERO;

@@ -18,6 +18,17 @@ export interface TaxLine {
   priceSet: MoneyBag;
 }
 
+/**
+ * One discount apportioned onto a line or shipping line.
+ *
+ * This is the only field that accounts for an order-level discount code. `discountedTotalSet`
+ * carries line-level discounts alone, so a cart-wide code leaves it equal to the original
+ * price and the discount disappears from revenue entirely.
+ */
+export interface DiscountAllocation {
+  allocatedAmountSet: MoneyBag;
+}
+
 export interface ShopifyLineItemNode {
   id: string;
   quantity: number;
@@ -25,7 +36,7 @@ export interface ShopifyLineItemNode {
   variant: { id: string } | null;
   /** Quantity times the original unit price, before discounts. */
   originalTotalSet: MoneyBag;
-  discountedTotalSet: MoneyBag;
+  discountAllocations: DiscountAllocation[];
   taxLines: TaxLine[];
 }
 
@@ -71,9 +82,12 @@ export interface ShopifyOrderNode {
   displayFinancialStatus: string | null;
   customer: { id: string } | null;
   totalDiscountsSet: MoneyBag;
+  /** What the customer was charged. Used to check the parts sum back to the whole. */
+  totalPriceSet: MoneyBag;
+  /** Shipping charged, before any shipping discount. */
   totalShippingPriceSet: MoneyBag;
   totalTaxSet: MoneyBag;
-  shippingLines: { nodes: { taxLines: TaxLine[] }[] };
+  shippingLines: { nodes: { taxLines: TaxLine[]; discountAllocations: DiscountAllocation[] }[] };
   lineItems: { nodes: ShopifyLineItemNode[] };
   refunds: ShopifyRefundNode[];
 }

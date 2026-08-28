@@ -19,6 +19,7 @@ import { money, sum, ZERO, type DecimalInput } from "@/lib/financial/money";
 import { toBusinessDate } from "@/lib/financial/dates";
 import {
   normaliseOrderBatch,
+  type OrderTotalMismatch,
   type ShopifyNormalisationOptions,
 } from "@/lib/connectors/shopify/normalise";
 import type {
@@ -59,6 +60,12 @@ export interface PersistOrderBatchResult {
    * under-counts until the product catalogue has been synced.
    */
   unresolvedVariants: number;
+  /**
+   * Orders whose gross, discounts, shipping and tax do not add back to the total Shopify
+   * charged. Reported rather than rejected — the row is still worth having — but a non-empty
+   * list means a money field is being read wrongly and every figure built on it is suspect.
+   */
+  totalMismatches: OrderTotalMismatch[];
 }
 
 export function createShopifyRepository(client: SupabaseClient, context: ShopifyRepositoryContext) {
@@ -274,6 +281,7 @@ export function createShopifyRepository(client: SupabaseClient, context: Shopify
         refundLines: 0,
         customers: 0,
         unresolvedVariants: 0,
+        totalMismatches: [],
       };
       if (nodes.length === 0) return empty;
 
@@ -380,6 +388,7 @@ export function createShopifyRepository(client: SupabaseClient, context: Shopify
         refundLines,
         customers: customers.size,
         unresolvedVariants,
+        totalMismatches: batch.totalMismatches,
       };
     },
   };

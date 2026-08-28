@@ -5,6 +5,7 @@
  *   npm run backfill:shopify -- --dry-run --pages 3
  *   npm run backfill:shopify                  full backfill
  *   npm run backfill:shopify -- --since 2026-01-01
+ *   npm run backfill:shopify -- --created-since 2026-01-01 --force   re-read after a fix
  *
  * Run through tsx. The library uses extensionless imports and the `@/` alias, which is
  * bundler-style resolution that Node's own ESM resolver does not implement — and its
@@ -26,7 +27,7 @@ import { connect, loadEnvFile, requireEnv } from "./lib/db.mjs";
 import { decryptToken } from "@/lib/connectors/crypto";
 import { ShopifyClient, fetchConnectionPage } from "@/lib/connectors/shopify/client";
 import { ORDERS_QUERY, createdSinceQuery, updatedSinceQuery } from "@/lib/connectors/shopify/queries";
-import { normaliseOrderBatch } from "@/lib/connectors/shopify/normalise";
+import { normaliseOrderBatch, type OrderTotalMismatch } from "@/lib/connectors/shopify/normalise";
 import { buildShopifyOrdersSyncJob, buildShopifyVariantsSyncJob } from "@/lib/connectors/shopify/sync";
 import { createSupabaseSyncStore } from "@/lib/connectors/supabase-sync-store";
 import { runSync } from "@/lib/connectors/sync-runner";
@@ -179,6 +180,21 @@ if (dryRun) {
     console.log(`${zeroLines.length} order(s) have no line items.`);
   }
 
+  // The arithmetic that says the money fields are being read correctly. A dry run is exactly
+  // where this belongs: it is cheaper to find a misread field here than in published margin.
+  if (batch.totalMismatches.length > 0) {
+    console.log(`\n${batch.totalMismatches.length} order(s) do not add back to what Shopify charged:`);
+    for (const mismatch of batch.totalMismatches.slice(0, 10)) {
+      console.log(
+        `  ${mismatch.name} ${mismatch.businessDate}: derived ${mismatch.derived.toFixed(2)} vs charged ` +
+          `${mismatch.charged.toFixed(2)} (${mismatch.difference.toFixed(2)})`,
+      );
+    }
+    console.log("A positive difference means revenue is being overstated.");
+  } else {
+    console.log("\nEvery order's parts add back to the total Shopify charged.");
+  }
+
   console.log("\nNothing was written. Re-run without --dry-run to persist.");
   process.exit(0);
 }
@@ -232,6 +248,21 @@ if (!argv.includes("--skip-catalogue")) {
 
 console.log("--- orders ---");
 const totals = { orders: 0, orderLines: 0, refunds: 0, customers: 0, unresolvedVariants: 0 };
+const totalMismatches: OrderTotalMismatch[] = [];
+
+// Re-running the same discriminator is deliberately a no-op: that is what makes a retried
+// cron safe. But a connector fix has to be able to restate history it already imported, and
+// inventing a slightly different --created-since to dodge the job key would misdescribe the
+// window that ran. `--force` says so honestly, in the job key itself.
+const baseDiscriminator = `backfill-${createdSince ? `created-${createdSince}` : (since ?? "all")}`;
+const discriminator = argv.includes("--force")
+  ? `${baseDiscriminator}-force-${new Date().toISOString().replace(/[:.]/g, "-")}`
+  : baseDiscriminator;
+
+if (argv.includes("--force")) {
+  console.log("Forcing a re-read. Orders upsert on their Shopify id, so this restates rather");
+  console.log("than duplicates — use it after a connector fix, not for routine runs.\n");
+}
 
 const job = buildShopifyOrdersSyncJob({
   client,
@@ -240,8 +271,7 @@ const job = buildShopifyOrdersSyncJob({
   businessTimezone: connection.businessTimezone,
   updatedSince: since,
   createdSince,
-  // Re-running the same discriminator is deliberately a no-op. Change it to force a re-read.
-  jobDiscriminator: `backfill-${createdSince ? `created-${createdSince}` : (since ?? "all")}`,
+  jobDiscriminator: discriminator,
   pageSize,
   onPagePersisted: (result) => {
     totals.orders += result.orders;
@@ -249,6 +279,7 @@ const job = buildShopifyOrdersSyncJob({
     totals.refunds += result.refunds;
     totals.customers += result.customers;
     totals.unresolvedVariants += result.unresolvedVariants;
+    totalMismatches.push(...result.totalMismatches);
     process.stdout.write(`  +${result.orders} orders (${totals.orders} total)\n`);
   },
 });
@@ -257,7 +288,7 @@ const outcome = await runSync(job, store);
 
 console.log(`\nstatus: ${outcome.status}`);
 if (outcome.status === "skipped") {
-  console.log("This job key already succeeded. Pass a different --since to run a new window.");
+  console.log("This job key already succeeded. Pass --force to re-read the same window.");
 } else if (outcome.status === "failed") {
   console.log(`  ${outcome.error.message}`);
   console.log(`  pages ${outcome.pages}, received ${outcome.received}, written ${outcome.written}`);
@@ -273,4 +304,18 @@ console.log(`customers seen   : ${totals.customers}`);
 if (totals.unresolvedVariants > 0) {
   console.log(`\n${totals.unresolvedVariants} line(s) written with no variant id.`);
   console.log("SKU-level reporting is incomplete until the product catalogue is synced.");
+}
+
+// Written, then reported. Withholding the rows would lose the orders as well as the warning;
+// exiting non-zero is what stops a mismatch being mistaken for a clean run.
+if (totalMismatches.length > 0) {
+  console.log(`\n${totalMismatches.length} order(s) do not add back to what Shopify charged:`);
+  for (const mismatch of totalMismatches.slice(0, 10)) {
+    console.log(
+      `  ${mismatch.name} ${mismatch.businessDate}: derived ${mismatch.derived.toFixed(2)} vs charged ` +
+        `${mismatch.charged.toFixed(2)} (${mismatch.difference.toFixed(2)})`,
+    );
+  }
+  console.log("These rows are written but a money field is being read wrongly. Do not publish.");
+  process.exitCode = 1;
 }

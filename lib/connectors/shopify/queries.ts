@@ -4,6 +4,11 @@
  * Orders are paged by `updatedAt` so an incremental sync collects anything edited since the
  * last watermark, not just newly created orders — an order refunded days later must be
  * re-read. `sortKey: UPDATED_AT` keeps that ordering stable across pages.
+ *
+ * Discounts are read from `discountAllocations`, never from `discountedTotalSet`. The latter
+ * reflects line-level discounts only: on an order carrying a cart-wide code it equals the
+ * original price, so the discount vanishes and revenue reads high. `totalPriceSet` is fetched
+ * alongside so the parts can be checked against what the customer was actually charged.
  */
 
 export const SHOPIFY_API_VERSION = "2026-07";
@@ -35,6 +40,12 @@ export const ORDERS_QUERY = /* GraphQL */ `
             currencyCode
           }
         }
+        totalPriceSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+        }
         totalShippingPriceSet {
           shopMoney {
             amount
@@ -57,6 +68,14 @@ export const ORDERS_QUERY = /* GraphQL */ `
                 }
               }
             }
+            discountAllocations {
+              allocatedAmountSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
+              }
+            }
           }
         }
         lineItems(first: 100) {
@@ -73,10 +92,12 @@ export const ORDERS_QUERY = /* GraphQL */ `
                 currencyCode
               }
             }
-            discountedTotalSet {
-              shopMoney {
-                amount
-                currencyCode
+            discountAllocations {
+              allocatedAmountSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
               }
             }
             taxLines {

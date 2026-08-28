@@ -116,6 +116,15 @@ Use `--created-since` to bound a backfill to a period of trading, and `--since` 
 incremental run. They filter different fields: `created_at` bounds a window, `updated_at`
 catches orders edited later, such as one refunded weeks after it was placed.
 
+Re-running a window that already succeeded is a no-op, which is what makes a retried cron
+safe. Pass `--force` to re-read it anyway after a connector fix — orders upsert on their
+Shopify id, so it restates rather than duplicates.
+
+Every run checks that each order's gross, discounts, shipping and tax add back to the total
+Shopify charged, and reports the orders that do not. That identity is what catches a money
+field being read from the wrong place while each figure still looks plausible alone.
+`npm run reconcile:shopify` runs the same check against everything already stored.
+
 Scripts that import application code run through `tsx`. The library uses extensionless
 imports and the `@/` alias — bundler-style resolution that Node's own ESM resolver does not
 implement, and whose strip-only TypeScript mode also rejects parameter properties.

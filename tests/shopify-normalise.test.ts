@@ -5,13 +5,15 @@ import {
   normaliseOrder,
   normaliseOrderBatch,
   normaliseRefunds,
+  reconcileOrderTotal,
 } from "../lib/connectors/shopify/normalise";
-import { sum } from "../lib/financial/money";
+import { money, sum } from "../lib/financial/money";
 import type { MoneyBag, ShopifyOrderNode } from "../lib/connectors/shopify/types";
 import type { OrderInput } from "../lib/financial/domain";
 
 const options = { businessTimezone: "Europe/London" };
 const bag = (amount: string): MoneyBag => ({ shopMoney: { amount, currencyCode: "GBP" } });
+const allocation = (amount: string) => ({ allocatedAmountSet: bag(amount) });
 
 /** A £30 order: 2 units at £15 including 20% VAT, plus £3.95 shipping including VAT. */
 function taxInclusiveOrder(overrides: Partial<ShopifyOrderNode> = {}): ShopifyOrderNode {
@@ -28,9 +30,10 @@ function taxInclusiveOrder(overrides: Partial<ShopifyOrderNode> = {}): ShopifyOr
     displayFinancialStatus: "PAID",
     customer: { id: "gid://shopify/Customer/1" },
     totalDiscountsSet: bag("0.00"),
+    totalPriceSet: bag("33.95"),
     totalShippingPriceSet: bag("3.95"),
     totalTaxSet: bag("5.66"),
-    shippingLines: { nodes: [{ taxLines: [{ priceSet: bag("0.66") }] }] },
+    shippingLines: { nodes: [{ taxLines: [{ priceSet: bag("0.66") }], discountAllocations: [] }] },
     lineItems: {
       nodes: [
         {
@@ -39,7 +42,7 @@ function taxInclusiveOrder(overrides: Partial<ShopifyOrderNode> = {}): ShopifyOr
           sku: "ORANGE-30",
           variant: { id: "gid://shopify/ProductVariant/1" },
           originalTotalSet: bag("30.00"),
-          discountedTotalSet: bag("30.00"),
+          discountAllocations: [],
           taxLines: [{ priceSet: bag("5.00") }],
         },
       ],
@@ -47,6 +50,28 @@ function taxInclusiveOrder(overrides: Partial<ShopifyOrderNode> = {}): ShopifyOr
     refunds: [],
     ...overrides,
   };
+}
+
+/** The same order with a £6 cart-wide code, apportioned onto the line as an allocation. */
+function discountedOrder(): ShopifyOrderNode {
+  return taxInclusiveOrder({
+    totalDiscountsSet: bag("6.00"),
+    totalPriceSet: bag("27.95"),
+    totalTaxSet: bag("4.66"),
+    lineItems: {
+      nodes: [
+        {
+          id: "gid://shopify/LineItem/1",
+          quantity: 2,
+          sku: "ORANGE-30",
+          variant: { id: "gid://shopify/ProductVariant/1" },
+          originalTotalSet: bag("30.00"),
+          discountAllocations: [allocation("6.00")],
+          taxLines: [{ priceSet: bag("4.00") }],
+        },
+      ],
+    },
+  });
 }
 
 describe("Shopify order normalisation", () => {
@@ -67,28 +92,35 @@ describe("Shopify order normalisation", () => {
 
   it("separates discounts from merchandise value", () => {
     // £30 list, £6 discount, VAT charged on the £24 actually paid.
+    const order = normaliseOrder(discountedOrder(), options);
+    // Ex-VAT list price £25, ex-VAT discount £5, so ex-VAT net merchandise is £20.
+    expect(order.grossSales.toString()).toBe("25");
+    expect(order.discounts.toString()).toBe("5");
+  });
+
+  it("counts an order-level discount code, which reaches the line only as an allocation", () => {
+    // A cart-wide code leaves discountedTotalSet equal to the original price. Reading the
+    // discount from that field returned zero here, so the full list price became revenue.
+    const order = normaliseOrder(discountedOrder(), options);
+    expect(order.discounts.toString()).toBe("5");
+    expect(money(order.grossSales).minus(money(order.discounts)).toString()).toBe("20");
+  });
+
+  it("takes a free-shipping code off shipping revenue", () => {
+    // totalShippingPriceSet is shipping before discount, so postage the customer never paid
+    // would otherwise be reported as revenue.
     const order = normaliseOrder(
       taxInclusiveOrder({
-        totalDiscountsSet: bag("6.00"),
-        lineItems: {
-          nodes: [
-            {
-              id: "gid://shopify/LineItem/1",
-              quantity: 2,
-              sku: "ORANGE-30",
-              variant: { id: "gid://shopify/ProductVariant/1" },
-              originalTotalSet: bag("30.00"),
-              discountedTotalSet: bag("24.00"),
-              taxLines: [{ priceSet: bag("4.00") }],
-            },
-          ],
+        totalDiscountsSet: bag("3.95"),
+        totalPriceSet: bag("30.00"),
+        totalTaxSet: bag("5.00"),
+        shippingLines: {
+          nodes: [{ taxLines: [{ priceSet: bag("0.00") }], discountAllocations: [allocation("3.95")] }],
         },
       }),
       options,
     );
-    // Ex-VAT list price £25, ex-VAT discount £5, so ex-VAT net merchandise is £20.
-    expect(order.grossSales.toString()).toBe("25");
-    expect(order.discounts.toString()).toBe("5");
+    expect(order.shippingRevenue.toString()).toBe("0");
   });
 
   it("maps line items with their variant and quantity", () => {
@@ -126,6 +158,44 @@ describe("Shopify order normalisation", () => {
 
   it("handles a guest order with no customer", () => {
     expect(normaliseOrder(taxInclusiveOrder({ customer: null }), options).customerId).toBeNull();
+  });
+});
+
+describe("order total reconciliation", () => {
+  it("passes when the parts add back to what Shopify charged", () => {
+    expect(reconcileOrderTotal(taxInclusiveOrder(), normaliseOrder(taxInclusiveOrder(), options))).toBeNull();
+    expect(reconcileOrderTotal(discountedOrder(), normaliseOrder(discountedOrder(), options))).toBeNull();
+  });
+
+  it("reports the order and the size of the gap when they do not", () => {
+    // What reading a cart-wide discount from the wrong field used to produce: the £6 code
+    // disappears, so the assembled total exceeds the £27.95 actually charged.
+    const order = discountedOrder();
+    const overstated = { ...normaliseOrder(order, options), discounts: "0.00" };
+
+    const mismatch = reconcileOrderTotal(order, overstated);
+    expect(mismatch).not.toBeNull();
+    expect(mismatch?.name).toBe("#1001");
+    expect(mismatch?.charged.toFixed(2)).toBe("27.95");
+    expect(mismatch?.derived.toFixed(2)).toBe("32.95");
+    expect(mismatch?.difference.toFixed(2)).toBe("5.00");
+  });
+
+  it("tolerates a penny, which is rounding on an apportioned discount", () => {
+    const order = { ...taxInclusiveOrder(), totalPriceSet: bag("33.96") };
+    expect(reconcileOrderTotal(order, normaliseOrder(order, options))).toBeNull();
+  });
+
+  it("collects mismatches across a batch rather than throwing on the first", () => {
+    const batch = normaliseOrderBatch(
+      [
+        taxInclusiveOrder(),
+        { ...discountedOrder(), id: "gid://shopify/Order/2", name: "#1002", totalPriceSet: bag("99.00") },
+      ],
+      options,
+    );
+    expect(batch.orders).toHaveLength(2);
+    expect(batch.totalMismatches.map((item) => item.name)).toEqual(["#1002"]);
   });
 });
 
@@ -262,6 +332,11 @@ describe("order batch normalisation", () => {
   });
 
   it("handles an empty page", () => {
-    expect(normaliseOrderBatch([], options)).toEqual({ orders: [], refunds: [], watermarkAt: null });
+    expect(normaliseOrderBatch([], options)).toEqual({
+      orders: [],
+      refunds: [],
+      totalMismatches: [],
+      watermarkAt: null,
+    });
   });
 });
