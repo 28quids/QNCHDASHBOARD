@@ -1,5 +1,9 @@
 -- QNCH Control Centre: canonical data foundation.
 -- Raw source facts are retained; reporting facts are versioned and rebuildable.
+--
+-- Transaction-wrapped so a failure part-way through cannot leave a half-built schema.
+
+begin;
 
 create extension if not exists pgcrypto;
 
@@ -440,3 +444,5 @@ alter table public.data_quality_results enable row level security;
 alter table public.reconciliation_results enable row level security;
 alter table public.alerts enable row level security;
 alter table public.change_audit_log enable row level security;
+
+commit;

@@ -14,6 +14,12 @@ This register controls live financial calculations. Until every required item is
 | 8 | **Advertising:** Which Xero accounts are media spend, and are agency/creative/affiliate costs acquisition spend? Confirm reporting timezone and comparison attribution window. | Platform daily spend in account timezone; separate labelled platform attribution; Xero mapping is the accounting reconciliation source. | Changes CM2, CAC, MER and reconciliation. |
 | 9 | **Cash:** List included Xero bank accounts and define available cash, committed cash, Shopify payout timing, VAT/tax, AP and purchase-order treatment. | Reconciled bank balance + explicitly dated commitments; do not use accounting profit as cash. | Determines cash runway and alerts. |
 | 10 | **Inventory:** Confirm source of record, locations, units-on-order ownership, reorder thresholds and whether 7- or 30-day sales are the alert basis. | Shopify inventory by location; show both 7- and 30-day run rates, alert on the approved one. | Determines stock-risk alerts. |
+| 11 | **Refund cost reversal:** When a refund is processed, should the stock cost be reversed always, only when the unit was restocked, or never? Should packaging and inbound freight also reverse? | Reverse product COGS only when Shopify reports the unit as restocked; treat packaging and inbound freight as consumed. | Changes CM1 and inventory value on any day with refunds. |
+| 12 | **Blended ROAS:** Is “blended ROAS” the same figure as MER (total net revenue ÷ total ad spend), or new-customer revenue ÷ ad spend? | Report MER and a separately labelled new-customer ROAS; do not publish a third “blended ROAS” that means either. | Two different numbers currently share one name in the brief. |
+| 13 | **Assumption vs. actual costs:** When a cost moves from a configured assumption to mapped Xero actuals, should the assumption be end-dated? | End-date the assumption on the date the Xero mapping takes over. The engine adds both sources and flags the overlap rather than choosing one. | Prevents the same cost being counted twice in CM1/CM3. |
+
+Items 11–13 were surfaced while implementing the engine. They are unresolved, so the engine
+requires them as explicit inputs and has no default for item 11.
 
 ## Response format
 

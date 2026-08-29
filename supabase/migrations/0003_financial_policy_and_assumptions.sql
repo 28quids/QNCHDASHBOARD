@@ -1,5 +1,9 @@
 -- Configurable, date-effective policies and assumptions. These are management inputs,
 -- never values inferred or silently rewritten from raw provider data.
+--
+-- Transaction-wrapped so a failure part-way through cannot leave a half-built schema.
+
+begin;
 
 create type public.cost_charge_basis as enum ('per_order', 'per_unit', 'percentage_of_revenue', 'fixed_period');
 create type public.financial_bucket as enum ('cm1', 'cm2', 'cm3', 'fixed_operating', 'cash_only');
@@ -58,3 +62,5 @@ create policy finance_admin_manage on public.cost_assumptions
   for all to authenticated
   using (public.has_organisation_role(organisation_id, array['owner', 'finance_admin']))
   with check (public.has_organisation_role(organisation_id, array['owner', 'finance_admin']));
+
+commit;

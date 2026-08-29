@@ -1,15 +1,13 @@
 import Decimal from "decimal.js";
-import type { BreakEvenInput, BreakEvenResult, DailyFinancialInput, DailyFinancialResult, DecimalInput } from "./types";
-
-Decimal.set({ precision: 28, rounding: Decimal.ROUND_HALF_UP });
-
-const amount = (value: DecimalInput) => new Decimal(value);
-const ratio = (numerator: Decimal, denominator: Decimal): Decimal | null =>
-  denominator.isZero() ? null : numerator.div(denominator);
+import { money as amount, ratio, type DecimalInput } from "./money";
+import type { BreakEvenInput, BreakEvenResult, DailyFinancialInput, DailyFinancialResult } from "./types";
 
 /** Calculates QNCH management contribution figures from policy-normalised amounts. */
 export function calculateDailyFinancials(input: DailyFinancialInput): DailyFinancialResult {
-  const netRevenue = amount(input.grossSales).minus(input.discounts).minus(input.refundsAndReturns);
+  const netRevenue = amount(input.grossSales)
+    .plus(input.shippingRevenue ?? 0)
+    .minus(input.discounts)
+    .minus(input.refundsAndReturns);
   const cm1 = netRevenue
     .minus(input.productCogs)
     .minus(input.packaging)

@@ -7,8 +7,25 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "migrate": "node scripts/migrate.mjs",
+    "migrate:status": "node scripts/migrate.mjs --status",
+    "verify:schema": "node scripts/verify-schema.mjs",
+    "show:tenant": "node scripts/show-tenant.mjs",
+    "seed:policy": "node scripts/seed-financial-policy.mjs",
+    "calculate": "tsx scripts/calculate-financials.mts",
+    "grant:access": "node scripts/grant-access.mjs",
+    "shopify:connect": "tsx scripts/register-shopify-connection.mts",
+    "probe:shopify": "tsx scripts/probe-shopify.mts",
+    "backfill:shopify": "tsx scripts/backfill-shopify.mts",
+    "reconcile:shopify": "tsx scripts/reconcile-shopify.mts",
+    "delete:orders-before": "node scripts/delete-orders-before.mjs",
+    "meta:connect": "tsx scripts/register-meta-connection.mts",
+    "backfill:meta": "tsx scripts/backfill-meta.mts",
+    "set:password": "node scripts/set-dashboard-password.mjs",
+    "seed:inventory": "node scripts/seed-inventory-settings.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
@@ -20,10 +37,13 @@
   },
   "devDependencies": {
     "@types/node": "^24.10.0",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
     "eslint": "^9.38.0",
     "eslint-config-next": "^16.0.1",
+    "pg": "^8.23.0",
+    "tsx": "^4.23.12",
     "typescript": "^5.9.3",
     "vitest": "^4.0.8"
   }

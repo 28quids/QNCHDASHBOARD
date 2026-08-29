@@ -1,7 +1,8 @@
-import Decimal from "decimal.js";
+import type Decimal from "decimal.js";
+import type { DecimalInput } from "./money";
 
 export type ContributionLevel = "cm1" | "cm3";
-export type DecimalInput = Decimal.Value;
+export type { DecimalInput };
 
 /**
  * Inputs have already been normalised to the finance-approved VAT and timing policy.
@@ -9,6 +10,8 @@ export type DecimalInput = Decimal.Value;
  */
 export interface DailyFinancialInput {
   grossSales: DecimalInput;
+  /** Customer-paid shipping. Part of revenue, kept separately identifiable per approved policy. */
+  shippingRevenue?: DecimalInput;
   discounts: DecimalInput;
   refundsAndReturns: DecimalInput;
   productCogs: DecimalInput;
