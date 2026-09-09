@@ -11,6 +11,7 @@ Internal business intelligence and financial-control system for QNCH. Supabase/P
 | Shopify connector | Complete, backfilled |
 | Reporting layer — database to engine to published figures | Complete |
 | Dashboard, authentication, nightly cron | Complete |
+| Targets, alerts and health status | Complete |
 | Meta connector | Complete |
 | TikTok Ads connector | Complete — credentials outstanding |
 | Xero connector | Complete — credentials outstanding |
@@ -251,6 +252,41 @@ neither cash nor cost — which is why they sit beside the balance rather than i
 
 Dates arrive .NET-serialised as `/Date(1476316800000+0000)/` and are converted through the
 business timezone, so a payment made late on the 1st is not reported on the 31st.
+
+## Targets and alerts
+
+The dashboard's GREEN / AMBER / RED status comes entirely from `metric_targets`. No threshold
+is written in code, so nothing in this repository decides what "good" looks like for QNCH.
+
+```
+npm run seed:targets -- --metrics                    # what can be targeted
+npm run seed:targets -- --set cm3_margin 15 --severity red
+npm run seed:targets -- --set blended_cac 22
+npm run seed:targets -- --list
+npm run seed:targets -- --unset cm3_margin
+```
+
+**Ratio metrics are given as percentages.** `--set cm3_margin 15` means 15% and is stored as
+0.15. The two differ by a hundredfold and both look plausible in a table, so the conversion
+happens in the script rather than in someone's head.
+
+The comparison is derived from the metric rather than supplied: a target on CAC is always a
+ceiling, one on margin always a floor. Letting either be stated by hand is an opportunity to
+get one backwards, and a backwards target fires constantly or never.
+
+Three behaviours are deliberate and worth knowing:
+
+- **No targets configured reads as "no targets", not as green.** A dashboard reporting perfect
+  health because nothing was ever measured is worse than one admitting it is not judging.
+- **A metric that could not be calculated reads as unavailable, not as met.** Operating margin
+  with no fixed costs configured is not a margin, and cash with no reported bank balance is not
+  zero cash.
+- **Unsetting end-dates the target rather than deleting it**, so restating a past period is
+  judged against the threshold that was in force at the time.
+
+Every key that can be targeted is listed in `lib/monitoring/metric-catalogue.ts`, which is the
+same catalogue the observation builder reads. A test asserts the two agree — a target stored
+against a key nothing evaluates would never fire, which looks exactly like one always met.
 
 ## Financial policy and costs
 

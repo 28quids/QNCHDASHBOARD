@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { toBusinessDate, type DateRange } from "@/lib/financial/dates";
 import type { FinancialPolicy } from "@/lib/financial/policy";
+import type { MetricTarget } from "@/lib/monitoring/targets";
 import { requireSession, type DashboardSession } from "@/lib/auth/current-user";
 import { buildReport, type ControlCentreReport } from "./report";
 import { createReportingRepository } from "./reporting-repository";
@@ -31,6 +32,8 @@ export interface DashboardData {
   /** The same figures for the preceding window, for period-on-period comparison. */
   comparison: ControlCentreReport;
   policy: FinancialPolicy;
+  /** Configured thresholds. Empty when none have been set, which is not the same as healthy. */
+  targets: MetricTarget[];
 }
 
 export type DashboardLoad =
@@ -57,12 +60,13 @@ export async function loadDashboard(
   const key = isTimeframeKey(params.timeframe) ? params.timeframe : DEFAULT_TIMEFRAME;
   const timeframe = resolveTimeframe(key, today);
 
-  const [report, comparison] = await Promise.all([
+  const [report, comparison, targets] = await Promise.all([
     loadRange(repository, timeframe.range, policy.policy),
     loadRange(repository, timeframe.comparison, policy.policy),
+    repository.loadMetricTargets(),
   ]);
 
-  return { status: "ready", session, timeframe, today, report, comparison, policy: policy.policy };
+  return { status: "ready", session, timeframe, today, report, comparison, policy: policy.policy, targets };
 }
 
 async function loadRange(

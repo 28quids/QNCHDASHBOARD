@@ -30,7 +30,8 @@
     "backfill:xero": "tsx scripts/backfill-xero.mts",
     "map:xero": "node scripts/map-xero-accounts.mjs",
     "set:password": "node scripts/set-dashboard-password.mjs",
-    "seed:inventory": "node scripts/seed-inventory-settings.mjs"
+    "seed:inventory": "node scripts/seed-inventory-settings.mjs",
+    "seed:targets": "tsx scripts/seed-metric-targets.mts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",

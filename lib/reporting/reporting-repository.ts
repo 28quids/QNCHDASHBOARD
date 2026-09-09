@@ -37,6 +37,7 @@ import type {
   VariantCostProfile,
 } from "@/lib/financial/domain";
 import type { ContributionLevel } from "@/lib/financial/types";
+import type { MetricTarget } from "@/lib/monitoring/targets";
 import type { FinancialPolicy, RefundCogsReversal } from "@/lib/financial/policy";
 
 export interface ReportingRepositoryContext {
@@ -448,9 +449,34 @@ export function createReportingRepository(
     return expenses;
   }
 
+  /**
+   * The configured targets, in the shape the evaluator expects.
+   *
+   * Nothing is defaulted. An organisation that has configured no targets produces no
+   * judgements at all, which is correct: the system does not get to decide what good looks
+   * like for QNCH.
+   */
+  async function loadMetricTargets(): Promise<MetricTarget[]> {
+    const { data, error } = await client
+      .from("metric_targets")
+      .select("metric_key, target_value, comparison, severity, effective_from, effective_to")
+      .eq("organisation_id", organisationId);
+    if (error) throw error;
+
+    return (data ?? []).map((row) => ({
+      metricKey: row.metric_key as string,
+      targetValue: row.target_value as string,
+      comparison: row.comparison as MetricTarget["comparison"],
+      severity: row.severity as MetricTarget["severity"],
+      effectiveFrom: row.effective_from as string,
+      effectiveTo: (row.effective_to as string | null) ?? null,
+    }));
+  }
+
   return {
     loadPolicy,
     loadAllocationContext,
+    loadMetricTargets,
 
     /** Everything `buildDailyFinancials` needs for one date range. */
     async loadFacts(range: DateRange, policy: FinancialPolicy): Promise<ReportingFacts> {
