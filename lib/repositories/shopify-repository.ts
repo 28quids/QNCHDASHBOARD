@@ -19,6 +19,7 @@ import { money, sum, ZERO, type DecimalInput } from "@/lib/financial/money";
 import { toBusinessDate } from "@/lib/financial/dates";
 import {
   normaliseOrderBatch,
+  type NormalisedPayout,
   type OrderTotalMismatch,
   type ShopifyNormalisationOptions,
 } from "@/lib/connectors/shopify/normalise";
@@ -390,6 +391,36 @@ export function createShopifyRepository(client: SupabaseClient, context: Shopify
         unresolvedVariants,
         totalMismatches: batch.totalMismatches,
       };
+    },
+
+    /**
+     * Writes settlement payouts.
+     *
+     * These feed reconciliation only — nothing in the contribution walk reads them. A payout is
+     * money arriving in the bank days after the orders that produced it, so treating it as
+     * revenue would report the same sale twice on two different dates.
+     */
+    async persistPayouts(payouts: readonly NormalisedPayout[]): Promise<number> {
+      if (payouts.length === 0) return 0;
+
+      const { error } = await client.from("shopify_payouts").upsert(
+        payouts.map((payout) => ({
+          organisation_id: organisationId,
+          external_id: payout.externalId,
+          payout_date: payout.payoutDate,
+          status: payout.status,
+          currency: payout.currency,
+          charges: payout.charges,
+          refunds: payout.refunds,
+          adjustments: payout.adjustments,
+          fees: payout.fees,
+          net_amount: payout.netAmount,
+          source_updated_at: payout.sourceUpdatedAt,
+        })),
+        { onConflict: "organisation_id,external_id" },
+      );
+      if (error) throw error;
+      return payouts.length;
     },
   };
 

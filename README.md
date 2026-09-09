@@ -13,6 +13,7 @@ Internal business intelligence and financial-control system for QNCH. Supabase/P
 | Dashboard, authentication, nightly cron | Complete |
 | Targets, alerts and health status | Complete |
 | Custom reporting, saved reports, CSV export | Complete |
+| Reconciliation and data-quality history | Complete |
 | Meta connector | Complete |
 | TikTok Ads connector | Complete — credentials outstanding |
 | Xero connector | Complete — credentials outstanding |
@@ -321,6 +322,51 @@ Three things the table is careful about:
 
 The CSV writes values unformatted. A spreadsheet has to read them as numbers, and `£1,234` and
 `42.0%` are text — a column of those sums to nothing.
+
+## Reconciliation
+
+Independent sources are compared on every refresh and the findings are stored, so a discrepancy
+has a history rather than only a current moment. Nothing here nudges a figure towards agreement:
+a difference is recorded as a difference, and a source that cannot be read is recorded as *not
+applicable* rather than as zero. "The two agree" and "one of them is missing" must never look
+the same.
+
+| Check | Compares |
+|---|---|
+| `revenue.shopify_payouts` | What customers were charged against what the processor settled |
+| `ad_spend.meta` / `ad_spend.tiktok` | A platform's reported spend against the money that left the bank |
+| `ad_spend.total` | All platform spend against all Xero advertising |
+| `cash.bank_balance` | The balance QNCH's movements imply against the one Xero reports |
+
+Three details decide whether these are meaningful rather than noise:
+
+- **The revenue check compares gross figures on both sides.** The order total including VAT and
+  shipping, against the payout's charges less refunds — not its net, which has fees taken out.
+  Comparing a VAT-exclusive management figure with a bank figure would report the VAT as a
+  discrepancy in every period, and comparing against net would report the processor's fee.
+- **The tolerance is proportional, not fixed.** A £50 gap on £500 is a problem and the same gap
+  on £50,000 is a Tuesday. It defaults to 2% of the larger side.
+- **The window is 30 days.** Settlements lag orders and advertising is billed in arrears, so a
+  shorter window is mostly timing difference and would report a finding every night.
+
+Per-platform advertising needs the chart of accounts to dedicate an account to each platform:
+
+```
+npm run map:xero -- --set 400 acquisition --platform meta
+```
+
+Left unset, only the total is reconciled — which is still worth knowing. Attributing a shared
+"Advertising" account to one platform by reading its name would be a guess presented as a fact.
+
+A reconciliation failure never fails the refresh. The numbers still imported, and the finding is
+the point; suppressing it because the run succeeded is how a discrepancy goes unnoticed for a
+quarter.
+
+Shopify payouts are synced for this and for nothing else. A payout is money arriving days after
+the orders that produced it, so reading it as revenue would report the same sale twice on two
+different dates. The summary breakdown is requested best-effort — a GraphQL field absent from
+the shop's API version fails the whole query — and falls back to a document carrying only the
+net amount, which is the figure the check actually needs.
 
 ## Financial policy and costs
 

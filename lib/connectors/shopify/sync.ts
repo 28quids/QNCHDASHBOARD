@@ -6,9 +6,17 @@
  * existed, a sync could fetch and normalise but had nowhere to put the result.
  */
 
-import { fetchConnectionPage, type ShopifyClient } from "./client";
-import { ORDERS_QUERY, VARIANTS_QUERY, createdSinceQuery, updatedSinceQuery } from "./queries";
-import type { ShopifyOrderNode, ShopifyVariantNode } from "./types";
+import { fetchConnectionPage, ShopifyGraphQlError, type Connection, type ShopifyClient } from "./client";
+import {
+  ORDERS_QUERY,
+  PAYOUTS_MINIMAL_QUERY,
+  PAYOUTS_QUERY,
+  VARIANTS_QUERY,
+  createdSinceQuery,
+  updatedSinceQuery,
+} from "./queries";
+import { normalisePayout, type NormalisedPayout } from "./normalise";
+import type { ShopifyOrderNode, ShopifyPayoutNode, ShopifyVariantNode } from "./types";
 import { buildJobKey, type SyncJob, type SyncPage } from "../sync-runner";
 import type {
   createShopifyRepository,
@@ -143,6 +151,78 @@ export function buildShopifyVariantsSyncJob(
       const result = await options.repository.persistVariantBatch(records, snapshotAt);
       options.onPagePersisted?.(result);
       return result.variants;
+    },
+  };
+}
+
+export interface ShopifyPayoutsSyncOptions {
+  client: ShopifyClient;
+  repository: ReturnType<typeof createShopifyRepository>;
+  connectionId: string;
+  businessTimezone: string;
+  jobDiscriminator: string;
+  pageSize?: number;
+  onPagePersisted?: (result: { payouts: number; withoutBreakdown: boolean }) => void;
+}
+
+/**
+ * Builds the Shopify Payments payout sync.
+ *
+ * Payouts exist for reconciliation and for nothing else. A payout is money arriving in the bank
+ * days after the orders that produced it, so it must never be read as revenue — doing so would
+ * report the same sale twice, on two different dates.
+ *
+ * The summary breakdown is requested on a best-effort basis. A GraphQL field name absent from
+ * the shop's API version fails the whole query rather than returning null, so the first
+ * rejection falls back to a document carrying only the net amount — which is the figure the
+ * reconciliation actually compares. What was lost is reported rather than assumed away.
+ */
+export function buildShopifyPayoutsSyncJob(options: ShopifyPayoutsSyncOptions): SyncJob<NormalisedPayout> {
+  const pageSize = options.pageSize ?? 50;
+  let breakdownUnavailable = false;
+
+  return {
+    provider: "shopify",
+    resourceName: "payouts",
+    connectionId: options.connectionId,
+    jobKey: buildJobKey("shopify", "payouts", options.jobDiscriminator),
+
+    async fetchPage(cursor: string | null): Promise<SyncPage<NormalisedPayout>> {
+      const read = (document: string) =>
+        fetchConnectionPage<ShopifyPayoutNode>(
+          options.client,
+          document,
+          { cursor, pageSize },
+          (data) =>
+            (data as unknown as { shopifyPaymentsAccount: { payouts: Connection<ShopifyPayoutNode> } | null })
+              .shopifyPaymentsAccount?.payouts ?? { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+        );
+
+      let page: { nodes: ShopifyPayoutNode[]; nextCursor: string | null };
+      try {
+        page = await read(breakdownUnavailable ? PAYOUTS_MINIMAL_QUERY : PAYOUTS_QUERY);
+      } catch (error) {
+        // Only a schema rejection is recoverable by asking for less. A throttle or an auth
+        // failure would not be fixed by it, and retrying would hide the real cause.
+        if (!(error instanceof ShopifyGraphQlError) || breakdownUnavailable) throw error;
+        breakdownUnavailable = true;
+        page = await read(PAYOUTS_MINIMAL_QUERY);
+      }
+
+      return {
+        records: page.nodes.map((node) => normalisePayout(node, options.businessTimezone)),
+        nextCursor: page.nextCursor,
+        watermarkAt: page.nodes.reduce<string | null>(
+          (latest, node) => (latest === null || node.issuedAt > latest ? node.issuedAt : latest),
+          null,
+        ),
+      };
+    },
+
+    async upsert(records: NormalisedPayout[]): Promise<number> {
+      const written = await options.repository.persistPayouts(records);
+      options.onPagePersisted?.({ payouts: written, withoutBreakdown: breakdownUnavailable });
+      return written;
     },
   };
 }

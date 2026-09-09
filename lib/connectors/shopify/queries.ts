@@ -214,3 +214,68 @@ export const updatedSinceQuery = (since: string | null): string =>
  */
 export const createdSinceQuery = (since: string | null): string =>
   since ? `created_at:>='${since}'` : "";
+
+/**
+ * Payouts from Shopify Payments, for reconciling reported revenue against money settled.
+ *
+ * Two documents rather than one, and the reason is worth stating. The summary breakdown —
+ * charges, refunds, adjustments and the fees on each — is the useful detail, but a GraphQL
+ * field name that does not exist in the shop's API version fails the *whole* query rather than
+ * returning null. Requiring the breakdown would therefore make the payout sync all-or-nothing.
+ *
+ * `PAYOUTS_QUERY` asks for the detail; `PAYOUTS_MINIMAL_QUERY` asks only for what the
+ * reconciliation genuinely needs, and is used when the first is rejected. Net amount alone is
+ * enough to compare settlements with revenue; the breakdown only explains the difference.
+ *
+ * Requires the `read_shopify_payments_payouts` scope. A shop that does not use Shopify Payments
+ * has no `shopifyPaymentsAccount` at all, which is null rather than an error.
+ */
+const PAYOUT_HEADER = /* GraphQL */ `
+  id
+  issuedAt
+  status
+  net {
+    amount
+    currencyCode
+  }
+`;
+
+export const PAYOUTS_QUERY = /* GraphQL */ `
+  query QnchPayouts($cursor: String, $pageSize: Int!) {
+    shopifyPaymentsAccount {
+      payouts(first: $pageSize, after: $cursor, sortKey: ISSUED_AT) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          ${PAYOUT_HEADER}
+          summary {
+            chargesGross { amount }
+            chargesFee { amount }
+            refundsFeeGross { amount }
+            refundsFee { amount }
+            adjustmentsGross { amount }
+            adjustmentsFee { amount }
+          }
+        }
+      }
+    }
+  }
+`;
+
+export const PAYOUTS_MINIMAL_QUERY = /* GraphQL */ `
+  query QnchPayoutsMinimal($cursor: String, $pageSize: Int!) {
+    shopifyPaymentsAccount {
+      payouts(first: $pageSize, after: $cursor, sortKey: ISSUED_AT) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          ${PAYOUT_HEADER}
+        }
+      }
+    }
+  }
+`;

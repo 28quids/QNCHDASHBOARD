@@ -18,7 +18,11 @@ import { bytesFromStored, decryptToken } from "./crypto";
 import { runSync, type SyncOutcome } from "./sync-runner";
 import { createSupabaseSyncStore } from "./supabase-sync-store";
 import { ShopifyClient } from "./shopify/client";
-import { buildShopifyOrdersSyncJob, buildShopifyVariantsSyncJob } from "./shopify/sync";
+import {
+  buildShopifyOrdersSyncJob,
+  buildShopifyPayoutsSyncJob,
+  buildShopifyVariantsSyncJob,
+} from "./shopify/sync";
 import { MetaClient } from "./meta/client";
 import { buildMetaHierarchySyncJob, buildMetaInsightsSyncJob, incrementalWindow } from "./meta/sync";
 import { TikTokClient } from "./tiktok/client";
@@ -40,10 +44,22 @@ import {
 } from "./xero/sync";
 import { createXeroRepository } from "@/lib/repositories/xero-repository";
 import { calculateAndPublish, type CalculationResult } from "@/lib/reporting/calculate";
+import { runReconciliation } from "@/lib/reporting/reconcile";
+import { collectDataQuality, persistDataQuality } from "@/lib/reporting/data-quality-run";
+import type { ReconciliationSummary } from "@/lib/monitoring/reconciliation";
 import { addDays, toBusinessDate } from "@/lib/financial/dates";
 
 /** Days republished on every run, to absorb late refunds and restated costs. */
 const RECALCULATION_WINDOW_DAYS = 45;
+
+/**
+ * Days reconciled on every run.
+ *
+ * Longer than the recalculation window on purpose. Settlements lag orders and advertising is
+ * billed in arrears, so a short window is mostly timing difference and reports a discrepancy
+ * every night. A month is long enough for the lag to wash out of both sides.
+ */
+const RECONCILIATION_WINDOW_DAYS = 30;
 
 export interface RefreshOptions {
   organisationId: string;
@@ -63,6 +79,16 @@ export interface RefreshResult {
   today: string;
   syncs: { provider: string; resource: string; outcome: SyncOutcome }[];
   calculation: CalculationResult | null;
+  /**
+   * What the independent sources disagreed about, or null when the checks could not run.
+   *
+   * A reconciliation failure never fails the refresh: the numbers still imported, and the
+   * finding is the point. Suppressing it because the run "succeeded" is how a discrepancy goes
+   * unnoticed for a quarter.
+   */
+  reconciliation: ReconciliationSummary | null;
+  /** Number of data-quality results recorded, or null when collecting them failed. */
+  dataQualityChecks: number | null;
   /** True when every sync succeeded or was skipped as already done. */
   allSucceeded: boolean;
 }
@@ -148,12 +174,39 @@ export async function refreshEverything(
     range: { from: addDays(today, -(RECALCULATION_WINDOW_DAYS - 1)), to: today },
   });
 
+  // Reconciliation and data quality run after the recalculation and never block it. Both are
+  // observations about the data rather than steps that produce it, so a failure to make an
+  // observation must not discard the import that was just completed.
+  const reconciliationWindow = { from: addDays(today, -(RECONCILIATION_WINDOW_DAYS - 1)), to: today };
+
+  const reconciliation = await runReconciliation(client, {
+    organisationId: options.organisationId,
+    businessTimezone: options.businessTimezone,
+    range: reconciliationWindow,
+  }).catch((error: unknown) => {
+    console.error(`Reconciliation failed: ${(error as Error).message}`);
+    return null;
+  });
+
+  const dataQualityChecks = await collectDataQuality(client, {
+    organisationId: options.organisationId,
+    businessTimezone: options.businessTimezone,
+    today,
+  })
+    .then((results) => persistDataQuality(client, options.organisationId, results))
+    .catch((error: unknown) => {
+      console.error(`Data-quality collection failed: ${(error as Error).message}`);
+      return null;
+    });
+
   return {
     startedAt,
     finishedAt: new Date().toISOString(),
     today,
     syncs,
     calculation,
+    reconciliation,
+    dataQualityChecks,
     allSucceeded: syncs.every((sync) => sync.outcome.status !== "failed"),
   };
 }
@@ -199,9 +252,24 @@ async function refreshShopify(
     store,
   );
 
+  // Settlements, for the revenue reconciliation. Nothing in the contribution walk reads them:
+  // a payout is money arriving days after the orders that produced it, so counting it as
+  // revenue would report the same sale twice on two different dates.
+  const payouts = await runSync(
+    buildShopifyPayoutsSyncJob({
+      client: shopify,
+      repository,
+      connectionId: connection.id,
+      businessTimezone: options.businessTimezone,
+      jobDiscriminator: discriminator,
+    }),
+    store,
+  );
+
   return [
     { provider: "shopify", resource: "variants", outcome: variants },
     { provider: "shopify", resource: "orders", outcome: orders },
+    { provider: "shopify", resource: "payouts", outcome: payouts },
   ];
 }
 

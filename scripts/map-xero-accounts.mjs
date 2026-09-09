@@ -9,8 +9,15 @@
  *   npm run map:xero -- --list                       # accounts, mappings and activity
  *   npm run map:xero -- --suggest                    # proposals, applied by nobody but you
  *   npm run map:xero -- --set 400 acquisition        # by account code
+ *   npm run map:xero -- --set 400 acquisition --platform meta
  *   npm run map:xero -- --set <uuid> fixed_operating # by Xero account id
  *   npm run map:xero -- --unset 400
+ *
+ * `--platform meta|tiktok` marks an acquisition account as belonging to one platform, which is
+ * what lets the reconciliation compare that platform's reported spend against the money that
+ * actually left the bank. Set it only on an account dedicated to one platform: an "Advertising"
+ * account carrying both can still be reconciled in total, and claiming otherwise would make the
+ * per-platform check compare figures that were never the same money.
  *
  * Categories: acquisition (CM2), variable_operating (CM3), fixed_operating, cash_commitment,
  * excluded. `excluded` is a decision, not an absence: it records that an account was looked at
@@ -56,12 +63,12 @@ const db = await connect();
 try {
   const { rows: accounts } = await db.query(
     `select a.id, a.external_id, a.code, a.name, a.type, a.account_class, a.bank_account_type, a.status,
-            r.financial_category, r.effective_from,
+            r.financial_category, r.ad_platform, r.effective_from,
             coalesce(activity.transactions, 0)::int as transactions,
             coalesce(activity.total, 0) as total
      from public.xero_accounts a
      left join lateral (
-       select r.financial_category, r.effective_from
+       select r.financial_category, r.ad_platform, r.effective_from
        from public.expense_mapping_rules r
        where r.organisation_id = a.organisation_id and r.xero_account_id = a.id
          and r.effective_to is null
@@ -96,6 +103,7 @@ try {
         name: account.name.slice(0, 40),
         type: account.type ?? "—",
         mapped: account.financial_category ?? "—",
+        platform: account.ad_platform ?? "—",
         lines: account.transactions,
         total: account.total ?? "0",
       })),
@@ -160,11 +168,18 @@ try {
     const key = flagAt("set", 1);
     const category = flagAt("set", 2);
     const from = flagAt("from", 1) ?? "1900-01-01";
+    const platform = flagAt("platform", 1) ?? null;
 
     const account = byKey.get(key);
     if (!account) throw new Error(`No Xero account matches ${key}`);
     if (!CATEGORIES.includes(category)) {
       throw new Error(`Unknown category ${category}. One of: ${CATEGORIES.join(", ")}`);
+    }
+    if (platform && !["meta", "tiktok"].includes(platform)) {
+      throw new Error(`Unknown platform ${platform}. One of: meta, tiktok`);
+    }
+    if (platform && category !== "acquisition") {
+      throw new Error("A platform can only be set on an acquisition account.");
     }
 
     await db.query("begin");
@@ -175,15 +190,18 @@ try {
       [organisationId, account.id, from],
     );
     await db.query(
-      `insert into public.expense_mapping_rules (organisation_id, xero_account_id, financial_category, effective_from)
-       values ($1, $2, $3, $4)
+      `insert into public.expense_mapping_rules
+         (organisation_id, xero_account_id, financial_category, ad_platform, effective_from)
+       values ($1, $2, $3, $4, $5)
        on conflict (organisation_id, xero_account_id, effective_from)
-       do update set financial_category = excluded.financial_category, effective_to = null`,
-      [organisationId, account.id, category, from],
+       do update set financial_category = excluded.financial_category,
+                     ad_platform = excluded.ad_platform,
+                     effective_to = null`,
+      [organisationId, account.id, category, platform, from],
     );
     await db.query("commit");
 
-    console.log(`${account.name} → ${category}, effective ${from}.`);
+    console.log(`${account.name} → ${category}${platform ? ` (${platform})` : ""}, effective ${from}.`);
     console.log("Run npm run calculate to restate the affected periods.");
     process.exit(0);
   }

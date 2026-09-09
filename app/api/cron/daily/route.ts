@@ -93,6 +93,19 @@ async function handle(request: NextRequest) {
     // recalculation still went ahead on whatever did arrive.
     status: result.allSucceeded ? "ok" : "partial",
     syncs,
+    // Reported, never used to fail the run. A discrepancy between Shopify, the platforms and
+    // Xero is a finding about the business, not a fault in the job that found it.
+    reconciliation: result.reconciliation
+      ? {
+          status: result.reconciliation.status,
+          unmatched: result.reconciliation.unmatched.map((check) => ({
+            key: check.reconciliationKey,
+            difference: check.difference?.toFixed(2) ?? null,
+            message: check.message,
+          })),
+        }
+      : null,
+    dataQualityChecks: result.dataQualityChecks,
     published: result.calculation?.status === "calculated" ? result.calculation.published : null,
     orders: result.calculation?.status === "calculated" ? result.calculation.report.summary.orders : null,
     netRevenue:

@@ -6,6 +6,7 @@ import type {
   DiscountAllocation,
   MoneyBag,
   ShopifyOrderNode,
+  ShopifyPayoutNode,
   ShopifyRefundNode,
   TaxLine,
 } from "./types";
@@ -243,5 +244,52 @@ export function normaliseOrderBatch(
       (latest, node) => (latest === null || node.updatedAt > latest ? node.updatedAt : latest),
       null,
     ),
+  };
+}
+
+export interface NormalisedPayout {
+  externalId: string;
+  payoutDate: string;
+  status: string;
+  currency: string;
+  charges: string;
+  refunds: string;
+  adjustments: string;
+  fees: string;
+  netAmount: string;
+  sourceUpdatedAt: string;
+}
+
+/**
+ * A payout, in the columns `shopify_payouts` stores.
+ *
+ * `issuedAt` is an instant, so it is converted through the business timezone: a payout issued
+ * late on the 1st is money that arrived on the 1st, and dating it by UTC would put it on the
+ * 31st and compare it against the wrong day's revenue.
+ *
+ * The breakdown columns are zero when the summary was not available. That is honest here in a
+ * way it would not be elsewhere: the net amount is the settled figure and is always present,
+ * and the parts are explanatory rather than load-bearing — nothing computes a total from them.
+ */
+export function normalisePayout(node: ShopifyPayoutNode, businessTimezone: string): NormalisedPayout {
+  const summary = node.summary;
+  const part = (value: { amount: string } | undefined) => money(value?.amount ?? 0);
+
+  const chargesGross = part(summary?.chargesGross);
+  const refundsGross = part(summary?.refundsFeeGross);
+  const adjustmentsGross = part(summary?.adjustmentsGross);
+  const fees = part(summary?.chargesFee).plus(part(summary?.refundsFee)).plus(part(summary?.adjustmentsFee));
+
+  return {
+    externalId: node.id,
+    payoutDate: toBusinessDate(node.issuedAt, businessTimezone),
+    status: node.status,
+    currency: node.net.currencyCode,
+    charges: chargesGross.toFixed(4),
+    refunds: refundsGross.toFixed(4),
+    adjustments: adjustmentsGross.toFixed(4),
+    fees: fees.toFixed(4),
+    netAmount: money(node.net.amount).toFixed(4),
+    sourceUpdatedAt: node.issuedAt,
   };
 }

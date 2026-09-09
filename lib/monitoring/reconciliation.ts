@@ -100,6 +100,30 @@ const totalInRange = (entries: readonly DatedAmount[], period: DateRange): Decim
   );
 
 /**
+ * Total advertising spend against the money that actually left the bank.
+ *
+ * Used where the chart of accounts does not dedicate an account to each platform, which is the
+ * common case: an "Advertising" account carrying both Meta and TikTok can still be reconciled
+ * in total, and a gap between what the platforms claim to have spent and what the bank paid is
+ * worth knowing whoever it belongs to. Attributing that account to one platform by reading its
+ * name would be a guess presented as a fact.
+ */
+export function reconcileAdvertisingSpend(
+  platformSpend: readonly DatedAmount[],
+  accountingSpend: readonly DatedAmount[],
+  period: DateRange,
+  tolerance: DecimalInput = 0,
+): ReconciliationResult {
+  return reconcile({
+    reconciliationKey: "ad_spend.total",
+    period,
+    sourceA: { label: "Platform reported spend", value: totalInRange(platformSpend, period) },
+    sourceB: { label: "Xero recorded advertising", value: totalInRange(accountingSpend, period) },
+    tolerance,
+  });
+}
+
+/**
  * Platform-reported spend against the money that actually left the bank.
  * Billing lags mean a tolerance is expected; a persistent gap is not.
  */

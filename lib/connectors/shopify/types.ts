@@ -121,3 +121,26 @@ export interface GraphQlResponse<T> {
     };
   };
 }
+
+/**
+ * A Shopify Payments payout.
+ *
+ * `summary` is optional because the detailed breakdown is requested on a best-effort basis:
+ * a field name absent from the shop's API version fails the whole GraphQL query, so the sync
+ * falls back to a document without it. The net amount is what the reconciliation needs; the
+ * breakdown only explains a difference it has already found.
+ */
+export interface ShopifyPayoutNode {
+  id: string;
+  issuedAt: string;
+  status: string;
+  net: Money;
+  summary?: {
+    chargesGross?: { amount: string };
+    chargesFee?: { amount: string };
+    refundsFeeGross?: { amount: string };
+    refundsFee?: { amount: string };
+    adjustmentsGross?: { amount: string };
+    adjustmentsFee?: { amount: string };
+  };
+}

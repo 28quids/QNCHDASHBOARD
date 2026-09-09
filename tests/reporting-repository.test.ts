@@ -494,3 +494,219 @@ describe("publishing daily financials", () => {
     expect(current.get("2026-06-11")).toBe("v1");
   });
 });
+
+describe("mapped Xero expenses", () => {
+  const RULES: Row[] = [
+    {
+      id: "rule-fulfilment",
+      organisation_id: ORGANISATION,
+      xero_account_id: "account-fulfilment",
+      financial_category: "variable_operating",
+      effective_from: "2026-01-01",
+      effective_to: null,
+    },
+    {
+      id: "rule-software",
+      organisation_id: ORGANISATION,
+      xero_account_id: "account-software",
+      financial_category: "fixed_operating",
+      effective_from: "2026-01-01",
+      effective_to: null,
+    },
+  ];
+
+  /**
+   * A single card charge split across two expense accounts. Charging the whole £120 to whichever
+   * account came first would put real money in the wrong contribution bucket — £100 of it, in
+   * this case, moving between CM3 and fixed costs.
+   */
+  it("charges a split transaction to each line's own bucket", async () => {
+    const { repository } = repositoryFor(
+      baseSeed({
+        expense_mapping_rules: RULES,
+        xero_bank_transactions: [
+          {
+            id: "txn-1",
+            organisation_id: ORGANISATION,
+            external_id: "x-1",
+            transaction_date: "2026-06-10",
+            transaction_type: "SPEND",
+            total: "120.0000",
+            reference: "Card payment",
+            xero_account_id: null,
+          },
+        ],
+        xero_bank_transaction_lines: [
+          {
+            id: "line-1",
+            organisation_id: ORGANISATION,
+            bank_transaction_id: "txn-1",
+            line_number: 1,
+            xero_account_id: "account-fulfilment",
+            line_amount: "20.0000",
+            tax_amount: "0.0000",
+            description: "Pick and pack",
+          },
+          {
+            id: "line-2",
+            organisation_id: ORGANISATION,
+            bank_transaction_id: "txn-1",
+            line_number: 2,
+            xero_account_id: "account-software",
+            line_amount: "100.0000",
+            tax_amount: "0.0000",
+            description: "Klaviyo",
+          },
+        ],
+      }),
+    );
+
+    const facts = await repository.loadFacts({ from: "2026-06-01", to: "2026-06-30" }, POLICY);
+
+    expect(facts.mappedExpenses).toHaveLength(2);
+    expect(facts.mappedExpenses.find((expense) => expense.category === "Pick and pack")).toMatchObject({
+      bucket: "cm3",
+    });
+    expect(facts.mappedExpenses.find((expense) => expense.category === "Klaviyo")).toMatchObject({
+      bucket: "fixed_operating",
+    });
+  });
+
+  /**
+   * The header total is tax inclusive. Charging the line amount without its tax would make a
+   * split transaction stop summing to the money that actually left the account.
+   */
+  it("adds the line's tax back, so the parts describe the same money as the total", async () => {
+    const { repository } = repositoryFor(
+      baseSeed({
+        expense_mapping_rules: RULES,
+        xero_bank_transactions: [
+          {
+            id: "txn-1",
+            organisation_id: ORGANISATION,
+            external_id: "x-1",
+            transaction_date: "2026-06-10",
+            transaction_type: "SPEND",
+            total: "120.0000",
+            xero_account_id: "account-fulfilment",
+          },
+        ],
+        xero_bank_transaction_lines: [
+          {
+            id: "line-1",
+            organisation_id: ORGANISATION,
+            bank_transaction_id: "txn-1",
+            line_number: 1,
+            xero_account_id: "account-fulfilment",
+            line_amount: "100.0000",
+            tax_amount: "20.0000",
+            description: "Fulfilment",
+          },
+        ],
+      }),
+    );
+
+    const facts = await repository.loadFacts({ from: "2026-06-01", to: "2026-06-30" }, POLICY);
+
+    expect(facts.mappedExpenses[0].amount.toString()).toBe("120");
+  });
+
+  /** A receipt against a mapped expense account is a refund or rebate, so it reduces the cost. */
+  it("treats a receipt as a negative cost", async () => {
+    const { repository } = repositoryFor(
+      baseSeed({
+        expense_mapping_rules: RULES,
+        xero_bank_transactions: [
+          {
+            id: "txn-1",
+            organisation_id: ORGANISATION,
+            external_id: "x-1",
+            transaction_date: "2026-06-10",
+            transaction_type: "RECEIVE",
+            total: "50.0000",
+            xero_account_id: "account-fulfilment",
+          },
+        ],
+        xero_bank_transaction_lines: [
+          {
+            id: "line-1",
+            organisation_id: ORGANISATION,
+            bank_transaction_id: "txn-1",
+            line_number: 1,
+            xero_account_id: "account-fulfilment",
+            line_amount: "50.0000",
+            tax_amount: "0.0000",
+          },
+        ],
+      }),
+    );
+
+    const facts = await repository.loadFacts({ from: "2026-06-01", to: "2026-06-30" }, POLICY);
+
+    expect(facts.mappedExpenses[0].amount.toString()).toBe("-50");
+  });
+
+  /**
+   * A transaction imported before lines were captured still has a header account. Falling back
+   * to it keeps that cost in the P&L rather than dropping it on a schema change.
+   */
+  it("falls back to the header account when a transaction has no stored lines", async () => {
+    const { repository } = repositoryFor(
+      baseSeed({
+        expense_mapping_rules: RULES,
+        xero_bank_transactions: [
+          {
+            id: "txn-1",
+            organisation_id: ORGANISATION,
+            external_id: "x-1",
+            transaction_date: "2026-06-10",
+            transaction_type: "SPEND",
+            total: "75.0000",
+            xero_account_id: "account-fulfilment",
+          },
+        ],
+        xero_bank_transaction_lines: [],
+      }),
+    );
+
+    const facts = await repository.loadFacts({ from: "2026-06-01", to: "2026-06-30" }, POLICY);
+
+    expect(facts.mappedExpenses).toHaveLength(1);
+    expect(facts.mappedExpenses[0].amount.toString()).toBe("75");
+  });
+
+  /** An unmapped account moves cash and must not silently enter a contribution bucket. */
+  it("ignores a line whose account has no mapping rule", async () => {
+    const { repository } = repositoryFor(
+      baseSeed({
+        expense_mapping_rules: RULES,
+        xero_bank_transactions: [
+          {
+            id: "txn-1",
+            organisation_id: ORGANISATION,
+            external_id: "x-1",
+            transaction_date: "2026-06-10",
+            transaction_type: "SPEND",
+            total: "10.0000",
+            xero_account_id: null,
+          },
+        ],
+        xero_bank_transaction_lines: [
+          {
+            id: "line-1",
+            organisation_id: ORGANISATION,
+            bank_transaction_id: "txn-1",
+            line_number: 1,
+            xero_account_id: "account-unmapped",
+            line_amount: "10.0000",
+            tax_amount: "0.0000",
+          },
+        ],
+      }),
+    );
+
+    const facts = await repository.loadFacts({ from: "2026-06-01", to: "2026-06-30" }, POLICY);
+
+    expect(facts.mappedExpenses).toHaveLength(0);
+  });
+});

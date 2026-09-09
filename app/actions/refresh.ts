@@ -52,6 +52,15 @@ export async function refreshNow(): Promise<RefreshState> {
     // Every page reads on request, so the whole dashboard reflects the new data.
     revalidatePath("/", "layout");
 
+    // Surfaced beside the sync outcomes, and never treated as a failure of the refresh: an
+    // unmatched source is a finding about the business, not a fault in the job that found it.
+    const unmatched = result.reconciliation?.unmatched ?? [];
+    if (unmatched.length > 0) {
+      detail.push(
+        `reconciliation — ${unmatched.length} unmatched: ${unmatched.map((check) => check.reconciliationKey).join(", ")}`,
+      );
+    }
+
     return {
       status: result.allSucceeded ? "ok" : "partial",
       message: result.allSucceeded
