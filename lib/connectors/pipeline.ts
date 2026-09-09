@@ -21,8 +21,15 @@ import { ShopifyClient } from "./shopify/client";
 import { buildShopifyOrdersSyncJob, buildShopifyVariantsSyncJob } from "./shopify/sync";
 import { MetaClient } from "./meta/client";
 import { buildMetaHierarchySyncJob, buildMetaInsightsSyncJob, incrementalWindow } from "./meta/sync";
+import { TikTokClient } from "./tiktok/client";
+import {
+  buildTikTokHierarchySyncJob,
+  buildTikTokReportSyncJob,
+  incrementalWindow as tiktokIncrementalWindow,
+} from "./tiktok/sync";
 import { createShopifyRepository } from "@/lib/repositories/shopify-repository";
 import { createMetaRepository } from "@/lib/repositories/meta-repository";
+import { createTikTokRepository } from "@/lib/repositories/tiktok-repository";
 import { calculateAndPublish, type CalculationResult } from "@/lib/reporting/calculate";
 import { addDays, toBusinessDate } from "@/lib/financial/dates";
 
@@ -113,6 +120,8 @@ export async function refreshEverything(
         syncs.push(...(await refreshShopify(client, store, connection, options, today, discriminator)));
       } else if (connection.provider === "meta") {
         syncs.push(...(await refreshMeta(client, store, connection, options, today, discriminator)));
+      } else if (connection.provider === "tiktok") {
+        syncs.push(...(await refreshTikTok(client, store, connection, options, today, discriminator)));
       }
     } catch (caught) {
       // A provider that throws outside runSync — a bad token, a missing account row — is
@@ -199,15 +208,7 @@ async function refreshMeta(
   today: string,
   discriminator: string,
 ): Promise<RefreshResult["syncs"]> {
-  const { data: account, error } = await client
-    .from("ad_accounts")
-    .select("id")
-    .eq("organisation_id", options.organisationId)
-    .eq("platform", "meta")
-    .eq("external_id", connection.externalAccountId)
-    .maybeSingle();
-  if (error) throw error;
-  if (!account) throw new Error(`No ad_accounts row for ${connection.externalAccountId}`);
+  const adAccountId = await findAdAccount(client, options.organisationId, "meta", connection.externalAccountId);
 
   const meta = new MetaClient({ accessToken: connection.token });
   const repository = createMetaRepository(client, { organisationId: options.organisationId });
@@ -219,7 +220,7 @@ async function refreshMeta(
       repository,
       connectionId: connection.id,
       accountExternalId: connection.externalAccountId,
-      adAccountId: account.id as string,
+      adAccountId,
       jobDiscriminator: discriminator,
     }),
     store,
@@ -238,7 +239,7 @@ async function refreshMeta(
         repository,
         connectionId: connection.id,
         accountExternalId: connection.externalAccountId,
-        adAccountId: account.id as string,
+        adAccountId,
         since: window.since,
         until: window.until,
         level,
@@ -250,4 +251,83 @@ async function refreshMeta(
   }
 
   return outcomes;
+}
+
+async function refreshTikTok(
+  client: SupabaseClient,
+  store: ReturnType<typeof createSupabaseSyncStore>,
+  connection: ProviderConnection,
+  options: RefreshOptions,
+  today: string,
+  discriminator: string,
+): Promise<RefreshResult["syncs"]> {
+  const adAccountId = await findAdAccount(client, options.organisationId, "tiktok", connection.externalAccountId);
+
+  const tiktok = new TikTokClient({ accessToken: connection.token });
+  const repository = createTikTokRepository(client, { organisationId: options.organisationId });
+  const window = tiktokIncrementalWindow(today);
+
+  const hierarchy = await runSync(
+    buildTikTokHierarchySyncJob({
+      client: tiktok,
+      repository,
+      connectionId: connection.id,
+      advertiserId: connection.externalAccountId,
+      adAccountId,
+      jobDiscriminator: discriminator,
+    }),
+    store,
+  );
+
+  const outcomes: RefreshResult["syncs"] = [
+    { provider: "tiktok", resource: "entities", outcome: hierarchy },
+  ];
+
+  // Advertiser level is what the P&L reads, so it runs first and must land even if a finer
+  // level fails. The finer levels only feed the marketing breakdown.
+  for (const level of ["advertiser", "campaign", "adgroup", "ad"] as const) {
+    const outcome = await runSync(
+      buildTikTokReportSyncJob({
+        client: tiktok,
+        repository,
+        connectionId: connection.id,
+        advertiserId: connection.externalAccountId,
+        adAccountId,
+        since: window.since,
+        until: window.until,
+        level,
+        jobDiscriminator: `${level}_${discriminator}`,
+      }),
+      store,
+    );
+    outcomes.push({ provider: "tiktok", resource: `report:${level}`, outcome });
+  }
+
+  return outcomes;
+}
+
+/**
+ * The `ad_accounts` row a connection refers to.
+ *
+ * Absent means the connect script was never run to completion, and every metric written
+ * against a guessed id would be unreadable. Throwing here is caught by the caller and reported
+ * as a failed provider rather than losing the run.
+ */
+async function findAdAccount(
+  client: SupabaseClient,
+  organisationId: string,
+  platform: "meta" | "tiktok",
+  externalId: string,
+): Promise<string> {
+  const { data, error } = await client
+    .from("ad_accounts")
+    .select("id")
+    .eq("organisation_id", organisationId)
+    .eq("platform", platform)
+    .eq("external_id", externalId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error(`No ad_accounts row for ${platform} ${externalId}`);
+
+  return data.id as string;
 }

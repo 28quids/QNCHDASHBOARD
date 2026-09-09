@@ -11,7 +11,9 @@ Internal business intelligence and financial-control system for QNCH. Supabase/P
 | Shopify connector | Complete, backfilled |
 | Reporting layer — database to engine to published figures | Complete |
 | Dashboard, authentication, nightly cron | Complete |
-| Meta, TikTok, Xero connectors | Not built — credentials outstanding |
+| Meta connector | Complete |
+| TikTok Ads connector | Complete — credentials outstanding |
+| Xero connector | Not built — credentials outstanding |
 | Google Sheets export | Not built — service account outstanding |
 
 The engine is pure: nothing in `lib/financial` reads the database or decides policy. Connectors
@@ -51,8 +53,13 @@ The list below is the template.
 | `CRON_SECRET` | Generate 32 random bytes. Bearer token for `/api/cron/daily`. |
 | `SHOPIFY_SHOP_DOMAIN` | The `myshopify.com` host, no scheme and no trailing slash. |
 | `SHOPIFY_ADMIN_TOKEN` | Admin API access token, begins `shpat_`. Not the `shpss_` secret key, and shown only once. |
+| `META_ACCESS_TOKEN` | Meta system user token. Not a user token — see below. |
+| `META_AD_ACCOUNT_ID` | The `act_...` identifier of the ad account. |
+| `TIKTOK_ACCESS_TOKEN` | TikTok developer portal, after an advertiser authorises the app. |
+| `TIKTOK_APP_ID` / `TIKTOK_APP_SECRET` | The app the token was issued for. Used only to list advertisers; never stored. |
+| `TIKTOK_ADVERTISER_ID` | The numeric advertiser id. `npm run tiktok:connect -- --list` prints the ones the token can reach. |
 
-Meta, TikTok, Xero and Google Sheets credentials are added when those connectors are built.
+Xero and Google Sheets credentials are added when those connectors are built.
 
 `lib/env.ts` validates the server set at startup with zod, so a missing or malformed value
 fails immediately rather than surfacing as an empty dashboard later.
@@ -128,6 +135,60 @@ field being read from the wrong place while each figure still looks plausible al
 Scripts that import application code run through `tsx`. The library uses extensionless
 imports and the `@/` alias — bundler-style resolution that Node's own ESM resolver does not
 implement, and whose strip-only TypeScript mode also rejects parameter properties.
+
+## Connecting Meta
+
+Use a **system user token**, not a user token. A user token expires every 60 days and breaks
+whenever the person who issued it loses access to the business portfolio; a system user token
+belongs to the business and does not expire.
+
+Business settings → Users → System users → your user → Generate new token, selecting your app
+and ticking `ads_read`. Then assign the *ad account* to that system user under Assign assets —
+assigning the app is a separate step, and both are required.
+
+```
+npm run meta:connect -- --list       # ad accounts this token can reach
+npm run meta:connect                 # register META_AD_ACCOUNT_ID
+npm run backfill:meta -- --dry-run   # fetch one page, write nothing
+npm run backfill:meta -- --since 2026-01-01
+```
+
+An empty account list has two quite different causes that look identical — a missing
+`ads_read` scope, or the scope without an assigned ad account — so `meta:connect` asks Meta
+which scopes were actually granted and says which of the two it is.
+
+## Connecting TikTok
+
+Create an app in the TikTok for Business developer portal, generate the authorisation URL,
+open it as a user with access to the advertiser account, and approve it. That produces an
+access token. Put the token, the app id and the app secret into `.env.local`.
+
+```
+npm run tiktok:connect -- --list     # advertisers this token can reach
+npm run tiktok:connect               # register TIKTOK_ADVERTISER_ID
+npm run backfill:tiktok -- --dry-run # fetch one page, write nothing
+npm run backfill:tiktok -- --since 2026-01-01
+```
+
+The app id and secret are needed because TikTok scopes the advertiser listing to the app
+rather than to the token alone. Neither is stored — only the token is, encrypted.
+
+Authorising the *app* is not the same as being assigned to the *advertiser*. Both are needed,
+and an account that has done only the first lists no advertisers at all; `--list` is what
+separates that from a bad token.
+
+**Which conversion metrics exist depends on the advertiser's optimisation goal and pixel**,
+and TikTok fails the whole request if one is unknown. The connector therefore requests the
+full set, and on a rejection retries once with the delivery metrics alone, reporting what it
+had to drop. Spend and impressions import either way; the conversion columns are left empty
+rather than being invented, and the untouched row is kept in `raw_metrics`.
+
+A metric that is meaningless under the query — conversions across ad groups optimising for
+different goals, say — comes back as the string `-`. That is stored as null, not zero: TikTok
+not measuring something is a different fact from it measuring none.
+
+Like Meta, the last week is re-imported on every run, because conversions continue to settle
+after TikTok's reporting latency. The upsert makes that converge rather than accumulate.
 
 ## Financial policy and costs
 
@@ -212,7 +273,7 @@ email.
 Cron is configured in `vercel.json` for 03:00 daily and supplies that header automatically.
 
 It **fetches from every connected provider and then recalculates** — Shopify catalogue and
-orders, Meta hierarchy and insights, then the contribution walk. The same pipeline is behind
+orders, Meta hierarchy and insights, TikTok hierarchy and reports, then the contribution walk. The same pipeline is behind
 the **Refresh now** button on the data-quality page, so a manual refresh and the nightly one
 cannot drift apart.
 
@@ -224,8 +285,9 @@ It republishes a trailing 45-day window rather than only yesterday: a refund pro
 lands on today, but an order edited in Shopify changes a past day, and a restated cost changes
 every day it applies to. Recomputing one day would leave those corrections unpublished.
 
-Meta is re-fetched over a trailing week on every run, because it restates conversions for
-several days as attribution settles. The upsert makes that converge rather than accumulate.
+Meta and TikTok are re-fetched over a trailing week on every run, because both restate
+conversions for several days as attribution settles. The upsert makes that converge rather
+than accumulate.
 
 ## Inventory settings
 
