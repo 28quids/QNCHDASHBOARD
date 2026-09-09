@@ -295,3 +295,70 @@ describe("collecting data quality", () => {
     expect(tables.data_quality_results.length).toBe(results.length);
   });
 });
+
+describe("advertising date coverage", () => {
+  const today = "2026-08-31";
+
+  const spendOn = (dates: readonly string[]): Row[] =>
+    dates.map((date, index) => ({
+      id: `m-${index}`,
+      organisation_id: ORGANISATION,
+      metric_date: date,
+      entity_id: null,
+      spend: "10.00",
+    }));
+
+  /**
+   * A missing day of spend enters the P&L as zero, which reads as a day of free revenue. That
+   * is exactly the failure the check exists to catch.
+   */
+  it("fails when a day of advertising is missing", async () => {
+    const { client: supabase } = createFakeSupabase(
+      seed({ ad_daily_metrics: spendOn(["2026-08-20", "2026-08-22"]) }),
+    );
+
+    const results = await collectDataQuality(as(supabase), {
+      organisationId: ORGANISATION,
+      businessTimezone: TIMEZONE,
+      today,
+    });
+
+    expect(results.find((result) => result.checkKey === "advertising.coverage")?.status).toBe("fail");
+  });
+
+  /** An organisation not running ads has no gap to report. */
+  it("is omitted entirely when there is no advertising at all", async () => {
+    const { client: supabase } = createFakeSupabase(seed());
+
+    const results = await collectDataQuality(as(supabase), {
+      organisationId: ORGANISATION,
+      businessTimezone: TIMEZONE,
+      today,
+    });
+
+    expect(results.some((result) => result.checkKey === "advertising.coverage")).toBe(false);
+  });
+
+  /**
+   * Platforms report with a lag of several hours, so the most recent day is legitimately absent
+   * for part of every morning. Including it would make the check cry wolf daily.
+   */
+  it("excludes the most recent days, which the platforms have not settled yet", async () => {
+    const complete: string[] = [];
+    for (let offset = 30; offset >= 2; offset -= 1) {
+      const date = new Date(Date.UTC(2026, 7, 31));
+      date.setUTCDate(date.getUTCDate() - offset);
+      complete.push(date.toISOString().slice(0, 10));
+    }
+
+    const { client: supabase } = createFakeSupabase(seed({ ad_daily_metrics: spendOn(complete) }));
+
+    const results = await collectDataQuality(as(supabase), {
+      organisationId: ORGANISATION,
+      businessTimezone: TIMEZONE,
+      today,
+    });
+
+    expect(results.find((result) => result.checkKey === "advertising.coverage")?.status).toBe("pass");
+  });
+});

@@ -13,6 +13,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   checkAdAccountTimezone,
+  checkDateCoverage,
   checkExpenseMappingCoverage,
   checkFinancialPolicyApproved,
   checkSyncFreshness,
@@ -22,6 +23,7 @@ import {
   type SyncState,
 } from "@/lib/monitoring/data-quality";
 import type { VariantCostProfile } from "@/lib/financial/domain";
+import { addDays } from "@/lib/financial/dates";
 
 /**
  * Every provider is checked, connected or not.
@@ -34,6 +36,15 @@ export const ALL_PROVIDERS: IntegrationProvider[] = ["shopify", "meta", "tiktok"
 
 /** A sync older than this is stale. A daily job that has not run in a day and a half has failed. */
 export const MAXIMUM_SYNC_AGE_HOURS = 36;
+
+/**
+ * Days of advertising checked for gaps.
+ *
+ * Yesterday is excluded from the window: platforms report with a lag of several hours, so the
+ * most recent day is legitimately absent for part of every morning and flagging it would make
+ * the check cry wolf daily.
+ */
+export const AD_COVERAGE_WINDOW_DAYS = 30;
 
 export interface DataQualityContext {
   organisationId: string;
@@ -57,6 +68,7 @@ export async function collectDataQuality(
     { data: adAccounts, error: adAccountError },
     { data: rules, error: ruleError },
     { data: activity, error: activityError },
+    { data: adDates, error: adDateError },
   ] = await Promise.all([
     client
       .from("integration_connections")
@@ -77,12 +89,19 @@ export async function collectDataQuality(
       .select("xero_account_id")
       .eq("organisation_id", organisationId)
       .not("xero_account_id", "is", null),
+    client
+      .from("ad_daily_metrics")
+      .select("metric_date")
+      .eq("organisation_id", organisationId)
+      .gte("metric_date", addDays(context.today, -AD_COVERAGE_WINDOW_DAYS))
+      .lte("metric_date", addDays(context.today, -2)),
   ]);
   if (connectionError) throw connectionError;
   if (settingsError) throw settingsError;
   if (adAccountError) throw adAccountError;
   if (ruleError) throw ruleError;
   if (activityError) throw activityError;
+  if (adDateError) throw adDateError;
 
   const byProvider = new Map((connections ?? []).map((row) => [row.provider as string, row]));
 
@@ -124,6 +143,23 @@ export async function collectDataQuality(
         .map((row) => row.xero_account_id as string),
     ),
   ];
+
+  /*
+   * A gap in advertising is a missing day of spend the P&L will silently report as zero, which
+   * looks like a day of free revenue. Orders are deliberately not checked the same way: a day
+   * with no orders is normal for a brand of this size, and flagging it would be noise.
+   *
+   * Only checked once some advertising exists — an organisation not running ads has no gap.
+   */
+  if ((adDates ?? []).length > 0) {
+    results.push(
+      checkDateCoverage(
+        "advertising.coverage",
+        (adDates ?? []).map((row) => row.metric_date as string),
+        { from: addDays(context.today, -AD_COVERAGE_WINDOW_DAYS), to: addDays(context.today, -2) },
+      ),
+    );
+  }
 
   // Cost coverage is only meaningful once the caller has loaded the orders that were sold. The
   // check is omitted rather than passed when it could not be run.

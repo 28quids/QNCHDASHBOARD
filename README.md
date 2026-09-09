@@ -39,6 +39,19 @@ Steps 6 and 7 are not optional. Until the policy is approved the dashboard shows
 outstanding decisions instead of figures, and until access is granted every query returns
 nothing — row-level security, not a bug.
 
+Then, in whatever order the credentials arrive:
+
+9. Connect Meta, TikTok and Xero, and backfill each.
+10. Map the Xero chart of accounts: `npm run map:xero -- --suggest`, then `--set` each one you
+    agree with. Until an account is mapped its spend moves cash and appears nowhere in the P&L.
+11. Set the thresholds the dashboard judges against: `npm run seed:targets -- --metrics`, then
+    `--set` each. Until then the dashboard reports "no targets configured" rather than green.
+12. Record supplier lead times: `npm run seed:inventory -- --lead-time 28`. Without one no
+    reorder alert can fire.
+
+Steps 10 to 12 are what turn a set of imported figures into a control centre. Each one is a
+business decision the system deliberately refuses to make on QNCH's behalf.
+
 ## Environment variables
 
 There is deliberately no committed `.env.example`. Every `.env*` file is ignored without
@@ -527,6 +540,8 @@ adapts to how fast a SKU is actually selling and a unit threshold does not.
 ## Guardrails
 
 - Never commit `.env`, service-account files, OAuth tokens, PII exports or financial credentials.
+- Xero refresh tokens are single use and rotate on every sync. Restoring an old database backup
+  restores a spent token, and the connection has to be made again.
 - Treat raw provider payloads as restricted; dashboard users should access derived, RLS-protected reporting views only.
 - Re-runnable syncs must upsert by provider external ID and record a `sync_runs.job_key`.
 - A production dashboard must show freshness/failed sync state and never coerce reconciliation differences to zero.
