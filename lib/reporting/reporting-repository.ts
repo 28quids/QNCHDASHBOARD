@@ -352,6 +352,12 @@ export function createReportingRepository(
   /**
    * Xero spend against accounts an approved mapping rule assigns to a contribution bucket.
    *
+   * Read at **line** grain, not at transaction grain. A single payment can be split across
+   * several expense accounts — fulfilment and software on one card charge, say — and charging
+   * the whole amount to whichever account happened to come first would put real money in the
+   * wrong contribution bucket. The transaction header holds the total, which is what the cash
+   * model needs; the lines hold the accounts, which is what this needs.
+   *
    * Only outgoing transactions are treated as costs. A receipt against a mapped expense
    * account is a refund or correction, so it reduces the cost rather than adding to it.
    */
@@ -365,38 +371,80 @@ export function createReportingRepository(
 
     const { data: transactions, error: transactionError } = await client
       .from("xero_bank_transactions")
-      .select("xero_account_id, transaction_date, transaction_type, total, reference")
+      .select(
+        "id, xero_account_id, transaction_date, transaction_type, total, reference, xero_bank_transaction_lines(xero_account_id, line_amount, tax_amount, description)",
+      )
       .eq("organisation_id", organisationId)
       .gte("transaction_date", range.from)
       .lte("transaction_date", range.to);
     if (transactionError) throw transactionError;
 
+    /** The rule in force for an account on a date, or null when none applies. */
+    const ruleFor = (accountId: string | null, date: string) => {
+      if (accountId === null) return null;
+      return (
+        rules.find(
+          (candidate) =>
+            candidate.xero_account_id === accountId &&
+            (candidate.effective_from as string) <= date &&
+            (!candidate.effective_to || (candidate.effective_to as string) >= date),
+        ) ?? null
+      );
+    };
+
     const expenses: MappedExpenseInput[] = [];
+
     for (const transaction of transactions ?? []) {
       const date = transaction.transaction_date as string;
-      const rule = rules.find(
-        (candidate) =>
-          candidate.xero_account_id === transaction.xero_account_id &&
-          (candidate.effective_from as string) <= date &&
-          (!candidate.effective_to || (candidate.effective_to as string) >= date),
-      );
+      // A receipt reduces the cost rather than adding to it.
+      const sign = transaction.transaction_type === "RECEIVE" ? -1 : 1;
+      const reference = (transaction.reference as string | null) ?? null;
+
+      const lines = (transaction.xero_bank_transaction_lines ?? []) as unknown as {
+        xero_account_id: string | null;
+        line_amount: string;
+        tax_amount: string;
+        description: string | null;
+      }[];
+
+      if (lines.length > 0) {
+        for (const line of lines) {
+          const rule = ruleFor(line.xero_account_id, date);
+          if (!rule) continue;
+
+          const bucket = EXPENSE_BUCKETS[rule.financial_category as string];
+          if (!bucket) continue;
+
+          // Tax is added back because the header total is tax inclusive, and the two figures
+          // have to describe the same money or a split transaction stops summing to its total.
+          const gross = money(line.line_amount).plus(money(line.tax_amount)).times(sign);
+
+          expenses.push({
+            businessDate: date,
+            bucket,
+            amount: gross,
+            category: line.description ?? reference ?? (rule.financial_category as string),
+          });
+        }
+        continue;
+      }
+
+      // No lines stored — a transaction imported before line capture, or one Xero returned
+      // without them. The header account is the only basis available.
+      const rule = ruleFor(transaction.xero_account_id as string | null, date);
       if (!rule) continue;
 
       const bucket = EXPENSE_BUCKETS[rule.financial_category as string];
       if (!bucket) continue;
 
-      const signed =
-        transaction.transaction_type === "RECEIVE"
-          ? money(transaction.total as string).negated()
-          : money(transaction.total as string);
-
       expenses.push({
         businessDate: date,
         bucket,
-        amount: signed,
-        category: (transaction.reference as string | null) ?? (rule.financial_category as string),
+        amount: money(transaction.total as string).times(sign),
+        category: reference ?? (rule.financial_category as string),
       });
     }
+
     return expenses;
   }
 

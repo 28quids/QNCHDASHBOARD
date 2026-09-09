@@ -13,7 +13,7 @@ Internal business intelligence and financial-control system for QNCH. Supabase/P
 | Dashboard, authentication, nightly cron | Complete |
 | Meta connector | Complete |
 | TikTok Ads connector | Complete — credentials outstanding |
-| Xero connector | Not built — credentials outstanding |
+| Xero connector | Complete — credentials outstanding |
 | Google Sheets export | Not built — service account outstanding |
 
 The engine is pure: nothing in `lib/financial` reads the database or decides policy. Connectors
@@ -58,8 +58,10 @@ The list below is the template.
 | `TIKTOK_ACCESS_TOKEN` | TikTok developer portal, after an advertiser authorises the app. |
 | `TIKTOK_APP_ID` / `TIKTOK_APP_SECRET` | The app the token was issued for. Used only to list advertisers; never stored. |
 | `TIKTOK_ADVERTISER_ID` | The numeric advertiser id. `npm run tiktok:connect -- --list` prints the ones the token can reach. |
+| `XERO_CLIENT_ID` / `XERO_CLIENT_SECRET` | The Xero app, from developer.xero.com. These identify QNCH's application, not the organisation. |
+| `XERO_REDIRECT_URI` | Optional. Defaults to `http://localhost:5478/callback`, which must be registered on the app. |
 
-Xero and Google Sheets credentials are added when those connectors are built.
+Google Sheets credentials are added when that connector is built.
 
 `lib/env.ts` validates the server set at startup with zod, so a missing or malformed value
 fails immediately rather than surfacing as an empty dashboard later.
@@ -190,6 +192,66 @@ not measuring something is a different fact from it measuring none.
 Like Meta, the last week is re-imported on every run, because conversions continue to settle
 after TikTok's reporting latency. The upsert makes that converge rather than accumulate.
 
+## Connecting Xero
+
+Xero is the only provider here that needs a human in a browser. There is no equivalent of a
+system user token, so someone with access to the organisation consents once.
+
+Create an app at developer.xero.com, choose **Web app**, and register
+`http://localhost:5478/callback` as a redirect URI. Put the client id and secret into
+`.env.local`, then:
+
+```
+npm run xero:connect                  # prints the URL, waits for the redirect
+npm run xero:connect -- --status      # what is connected, and when its token expires
+npm run backfill:xero -- --dry-run    # read the chart of accounts, write nothing
+npm run backfill:xero -- --since 2026-01-01
+npm run map:xero -- --suggest         # then --set each account you agree with
+```
+
+### The refresh token is single use
+
+This is the one thing about Xero that will bite if it is not understood. **Every refresh
+invalidates the token that was used** and issues a new one. The connector persists the rotated
+value before the access token is handed to anything, and a failure to store it fails the sync
+rather than being logged and stepped over — because a rotation that only exists in memory ends
+with a connection nobody can explain the loss of.
+
+Two consequences follow:
+
+- **Restoring an old database backup restores a spent token.** The connection has to be made
+  again. That is Xero's design, not a fault here.
+- **Sixty days without a sync expires the refresh token.** The connection is marked
+  `needs_reauth` and the data-quality page says so; `npm run xero:connect` fixes it.
+
+### Mapping accounts
+
+Until an account is mapped to a contribution bucket its spend is imported and then ignored: it
+moves cash and appears nowhere in the P&L. That default is deliberate. Guessing which bucket a
+cost belongs in does not produce an obviously wrong number, it produces a plausible CM2 that is
+quietly incorrect — so `map:xero --suggest` proposes and a human decides.
+
+Unmapping end-dates the rule rather than deleting it, so a past period keeps the basis it was
+calculated on instead of history silently changing.
+
+### What is read at which grain
+
+A single card payment can be split across several expense accounts. The transaction header
+carries the total, which is what the cash model needs; the **lines** carry the accounts, which
+is what the contribution walk reads. Charging a split payment entirely to whichever account
+came first would put real money in the wrong bucket, so it does not happen.
+
+The bank balance is the closing balance **Xero itself reports**, from its Bank Summary, and not
+a running total of imported movements. Those differ whenever an import is partial, and the
+running total reads exactly like a balance while being neither reconciled nor complete. Where
+no reported balance exists the cash page says so rather than showing a figure.
+
+Unpaid supplier bills are read as cash commitments. They are money owed and not yet paid —
+neither cash nor cost — which is why they sit beside the balance rather than inside it.
+
+Dates arrive .NET-serialised as `/Date(1476316800000+0000)/` and are converted through the
+business timezone, so a payment made late on the 1st is not reported on the 31st.
+
 ## Financial policy and costs
 
 `npm run seed:policy` records the thirteen decisions of the register as approved, writes the
@@ -273,7 +335,8 @@ email.
 Cron is configured in `vercel.json` for 03:00 daily and supplies that header automatically.
 
 It **fetches from every connected provider and then recalculates** — Shopify catalogue and
-orders, Meta hierarchy and insights, TikTok hierarchy and reports, then the contribution walk. The same pipeline is behind
+orders, Meta hierarchy and insights, TikTok hierarchy and reports, the Xero ledger and bank
+balance, then the contribution walk. The same pipeline is behind
 the **Refresh now** button on the data-quality page, so a manual refresh and the nightly one
 cannot drift apart.
 

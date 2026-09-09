@@ -65,6 +65,18 @@ export function decryptToken(payload: Buffer, key: string): string {
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
 }
 
+/**
+ * Decodes a stored ciphertext column into bytes.
+ *
+ * PostgREST renders `bytea` as the string `\x<hex>`, while the `pg` driver returns a Buffer
+ * for the same column. Both reach this codebase — the app reads over PostgREST and the scripts
+ * read over `pg` — so the difference is absorbed once here rather than at each call site.
+ */
+export function bytesFromStored(value: string | Buffer): Buffer {
+  if (Buffer.isBuffer(value)) return value;
+  return Buffer.from(value.startsWith("\\x") ? value.slice(2) : value, "hex");
+}
+
 export function readKeyVersion(payload: Buffer): number {
   if (payload.length === 0) throw new Error("Encrypted token payload is empty");
   return payload[0];

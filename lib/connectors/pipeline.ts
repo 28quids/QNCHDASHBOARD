@@ -14,7 +14,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { decryptToken } from "./crypto";
+import { bytesFromStored, decryptToken } from "./crypto";
 import { runSync, type SyncOutcome } from "./sync-runner";
 import { createSupabaseSyncStore } from "./supabase-sync-store";
 import { ShopifyClient } from "./shopify/client";
@@ -30,6 +30,15 @@ import {
 import { createShopifyRepository } from "@/lib/repositories/shopify-repository";
 import { createMetaRepository } from "@/lib/repositories/meta-repository";
 import { createTikTokRepository } from "@/lib/repositories/tiktok-repository";
+import { XeroClient } from "./xero/client";
+import { createSupabaseXeroTokenStore } from "./xero/token-store";
+import { normaliseBankSummary } from "./xero/normalise";
+import {
+  buildXeroAccountsSyncJob,
+  buildXeroBankTransactionsSyncJob,
+  buildXeroInvoicesSyncJob,
+} from "./xero/sync";
+import { createXeroRepository } from "@/lib/repositories/xero-repository";
 import { calculateAndPublish, type CalculationResult } from "@/lib/reporting/calculate";
 import { addDays, toBusinessDate } from "@/lib/financial/dates";
 
@@ -90,16 +99,10 @@ async function loadConnections(
         provider: row.provider as string,
         externalAccountId: row.external_account_id as string,
         // Supabase returns bytea as a hex string over PostgREST, not as a Buffer.
-        token: decryptToken(toBuffer(encrypted), encryptionKey),
+        token: decryptToken(bytesFromStored(encrypted), encryptionKey),
       },
     ];
   });
-}
-
-/** PostgREST renders bytea as `\x<hex>`; pg would have given a Buffer directly. */
-function toBuffer(value: string | Buffer): Buffer {
-  if (Buffer.isBuffer(value)) return value;
-  return Buffer.from(value.startsWith("\\x") ? value.slice(2) : value, "hex");
 }
 
 export async function refreshEverything(
@@ -122,6 +125,8 @@ export async function refreshEverything(
         syncs.push(...(await refreshMeta(client, store, connection, options, today, discriminator)));
       } else if (connection.provider === "tiktok") {
         syncs.push(...(await refreshTikTok(client, store, connection, options, today, discriminator)));
+      } else if (connection.provider === "xero") {
+        syncs.push(...(await refreshXero(client, store, connection, options, today, discriminator)));
       }
     } catch (caught) {
       // A provider that throws outside runSync — a bad token, a missing account row — is
@@ -330,4 +335,127 @@ async function findAdAccount(
   if (!data) throw new Error(`No ad_accounts row for ${platform} ${externalId}`);
 
   return data.id as string;
+}
+
+/**
+ * Xero: chart of accounts, bank transactions, bills, then the reported bank balance.
+ *
+ * The account sync runs first and the rest depend on it — a transaction resolves its bank and
+ * expense accounts against `xero_accounts`, so running into an empty chart writes rows that
+ * are visible in cash and invisible in the P&L.
+ *
+ * The bank balance is fetched last and outside `runSync`, because it is a report rather than a
+ * collection: there is nothing to page, nothing to upsert incrementally and no cursor to
+ * advance. It is still recorded as an outcome so a failure is visible rather than assumed.
+ */
+async function refreshXero(
+  client: SupabaseClient,
+  store: ReturnType<typeof createSupabaseSyncStore>,
+  connection: ProviderConnection,
+  options: RefreshOptions,
+  today: string,
+  discriminator: string,
+): Promise<RefreshResult["syncs"]> {
+  const environment = xeroEnvironment();
+  if (!environment) {
+    throw new Error("XERO_CLIENT_ID and XERO_CLIENT_SECRET are not configured");
+  }
+
+  const xero = new XeroClient({
+    clientId: environment.clientId,
+    clientSecret: environment.clientSecret,
+    // For Xero the external account id *is* the tenant id: one authorisation can cover several
+    // organisations, and the tenant is what picks between them.
+    tenantId: connection.externalAccountId,
+    store: createSupabaseXeroTokenStore(client, {
+      connectionId: connection.id,
+      encryptionKey: options.encryptionKey,
+    }),
+  });
+  const repository = createXeroRepository(client, { organisationId: options.organisationId });
+  const runStartedAt = new Date().toISOString();
+
+  const shared = { client: xero, repository, connectionId: connection.id, jobDiscriminator: discriminator };
+
+  const accounts = await runSync(buildXeroAccountsSyncJob(shared), store);
+  const outcomes: RefreshResult["syncs"] = [{ provider: "xero", resource: "accounts", outcome: accounts }];
+
+  // The previous watermark, which is what makes this incremental. Absent on a first run, which
+  // then reads the whole ledger — correct, and only expensive once.
+  const transactionWatermark = await store.getCursor(connection.id, "bank_transactions");
+  outcomes.push({
+    provider: "xero",
+    resource: "bank_transactions",
+    outcome: await runSync(
+      buildXeroBankTransactionsSyncJob({
+        ...shared,
+        businessTimezone: options.businessTimezone,
+        modifiedSince: transactionWatermark,
+        runStartedAt,
+      }),
+      store,
+    ),
+  });
+
+  const invoiceWatermark = await store.getCursor(connection.id, "invoices");
+  outcomes.push({
+    provider: "xero",
+    resource: "invoices",
+    outcome: await runSync(
+      buildXeroInvoicesSyncJob({
+        ...shared,
+        businessTimezone: options.businessTimezone,
+        modifiedSince: invoiceWatermark,
+        runStartedAt,
+      }),
+      store,
+    ),
+  });
+
+  outcomes.push({
+    provider: "xero",
+    resource: "bank_balances",
+    outcome: await syncBankBalances(xero, repository, today, discriminator),
+  });
+
+  return outcomes;
+}
+
+/**
+ * The closing balance per bank account, from Xero's Bank Summary report.
+ *
+ * Without this the cash page has no balance at all: a running total of imported movements is
+ * not one, and presenting it as one is the specific error the brief asks the system to avoid.
+ */
+async function syncBankBalances(
+  client: XeroClient,
+  repository: ReturnType<typeof createXeroRepository>,
+  today: string,
+  discriminator: string,
+): Promise<SyncOutcome> {
+  const jobKey = `xero:bank_balances:${discriminator}`;
+
+  try {
+    const report = await client.report("BankSummary", { fromDate: today, toDate: today });
+    const balances = normaliseBankSummary(report);
+    const written = await repository.persistBankBalances(balances, today);
+
+    return { status: "succeeded", jobKey, pages: 1, received: balances.length, written };
+  } catch (caught) {
+    const error = caught instanceof Error ? caught : new Error(String(caught));
+    return { status: "failed", jobKey, pages: 1, received: 0, written: 0, error };
+  }
+}
+
+/**
+ * Xero's app credentials, which unlike the other providers are not stored per connection.
+ *
+ * They identify QNCH's own OAuth application rather than the tenant, so they belong in the
+ * environment. Returns null rather than throwing, so the caller reports a misconfigured Xero
+ * as one failed provider instead of aborting the whole refresh.
+ */
+function xeroEnvironment(): { clientId: string; clientSecret: string } | null {
+  const clientId = process.env.XERO_CLIENT_ID;
+  const clientSecret = process.env.XERO_CLIENT_SECRET;
+  return clientId && clientSecret ? { clientId, clientSecret } : null;
 }

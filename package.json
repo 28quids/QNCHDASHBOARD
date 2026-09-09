@@ -26,6 +26,9 @@
     "backfill:meta": "tsx scripts/backfill-meta.mts",
     "tiktok:connect": "tsx scripts/register-tiktok-connection.mts",
     "backfill:tiktok": "tsx scripts/backfill-tiktok.mts",
+    "xero:connect": "tsx scripts/register-xero-connection.mts",
+    "backfill:xero": "tsx scripts/backfill-xero.mts",
+    "map:xero": "node scripts/map-xero-accounts.mjs",
     "set:password": "node scripts/set-dashboard-password.mjs",
     "seed:inventory": "node scripts/seed-inventory-settings.mjs"
   },

@@ -74,11 +74,11 @@ export default async function CashPage() {
 
       {!connected ? (
         <div className="banner red">
-          <h3>Xero is not connected</h3>
+          <h3>No bank balance has been reported</h3>
           <p className="muted">
-            No bank account is available, so the cash position cannot be reported. The figures
-            below would be a running total of imported transactions, which is not a reconciled
-            balance — so they are withheld rather than shown as if they were.
+            Either Xero is not connected, or its Bank Summary has not been synced yet. Without
+            it the only figure available is a running total of imported transactions, which is
+            not a reconciled balance — so it is withheld rather than shown as if it were.
           </p>
           <p className="muted">
             Inventory value is still shown, because it comes from Shopify stock and approved
@@ -91,7 +91,11 @@ export default async function CashPage() {
         <Metric
           label="Bank balance"
           value={connected ? gbp(position.bankBalance) : UNAVAILABLE}
-          note={connected ? "reconciled" : "Xero not connected"}
+          note={
+            connected && cash.bankBalanceAsAt
+              ? `as Xero reported it on ${formatDate(cash.bankBalanceAsAt)}`
+              : "no reported balance"
+          }
         />
         <Metric
           label="Available cash"
@@ -150,8 +154,8 @@ export default async function CashPage() {
             {cash.commitments.length === 0 ? (
               <tr>
                 <td colSpan={2} className="muted">
-                  No commitments recorded. Supplier bills arrive with the Xero connector;
-                  anything else can be entered manually.
+                  No commitments recorded. Unpaid supplier bills are read from Xero
+                  automatically; anything else can be entered manually.
                 </td>
               </tr>
             ) : null}

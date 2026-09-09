@@ -87,55 +87,105 @@ export function createOperationsRepository(client: SupabaseClient, organisationI
     },
 
     /**
-     * Bank balance and movements from the mapped Xero bank accounts.
+     * Bank balance and movements from the connected Xero bank accounts.
      *
-     * Returns null for the balance when Xero is not connected. That is not the same as a zero
-     * balance, and the cash page says so rather than reporting QNCH as having no money.
+     * The balance is the closing balance **Xero itself reports**, taken from its Bank Summary,
+     * and not a running total of whatever movements happen to have been imported. Those two
+     * differ whenever an import is partial or a window is bounded, and the running total reads
+     * exactly like a balance while being neither reconciled nor complete. Where no reported
+     * balance exists the answer is null, which the cash page states as unknown rather than
+     * showing QNCH as having no money.
+     *
+     * Movements are restricted to bank accounts. Every bank transaction has a bank side, so
+     * this is normally every row; the filter is what stops a transaction whose bank account is
+     * unresolved from being counted as cash it cannot be traced to.
      */
     async loadCash(range: DateRange): Promise<{
       bankBalance: number | null;
+      /** The date the reported balance was struck, so the cash page can date what it shows. */
+      bankBalanceAsAt: string | null;
       movements: CashMovement[];
       commitments: CashCommitment[];
     }> {
-      const [{ data: transactions, error: transactionError }, { data: commitments, error: commitmentError }] =
-        await Promise.all([
-          client
-            .from("xero_bank_transactions")
-            .select("transaction_date, transaction_type, total")
-            .eq("organisation_id", organisationId)
-            .gte("transaction_date", range.from)
-            .lte("transaction_date", range.to),
-          client
-            .from("cash_commitments")
-            .select("due_date, category, amount, description")
-            .eq("organisation_id", organisationId),
-        ]);
+      const [
+        { data: transactions, error: transactionError },
+        { data: commitments, error: commitmentError },
+        { data: balances, error: balanceError },
+        { data: bills, error: billError },
+      ] = await Promise.all([
+        client
+          .from("xero_bank_transactions")
+          .select("transaction_date, transaction_type, total, reference, bank_xero_account_id")
+          .eq("organisation_id", organisationId)
+          .gte("transaction_date", range.from)
+          .lte("transaction_date", range.to),
+        client
+          .from("cash_commitments")
+          .select("due_date, category, amount, description")
+          .eq("organisation_id", organisationId),
+        client
+          .from("xero_bank_balances")
+          .select("as_at, closing_balance")
+          .eq("organisation_id", organisationId)
+          .lte("as_at", range.to)
+          .order("as_at", { ascending: false }),
+        // Unpaid supplier bills. Money owed but not yet paid: neither cash nor cost, which is
+        // exactly what a commitment is, and why it is read here rather than in the P&L.
+        client
+          .from("xero_invoices")
+          .select("invoice_date, due_date, status, amount_due, contact_name")
+          .eq("organisation_id", organisationId)
+          .eq("invoice_type", "ACCPAY")
+          .gt("amount_due", 0),
+      ]);
       if (transactionError) throw transactionError;
       if (commitmentError) throw commitmentError;
+      if (balanceError) throw balanceError;
+      if (billError) throw billError;
 
-      const movements: CashMovement[] = (transactions ?? []).map((row) => ({
-        businessDate: row.transaction_date as string,
-        // Signed for the cash model: a SPEND leaves the account.
-        amount: row.transaction_type === "SPEND" ? -Number(row.total) : Number(row.total),
-      }));
+      const movements: CashMovement[] = (transactions ?? [])
+        .filter((row) => row.bank_xero_account_id !== null)
+        .map((row) => ({
+          businessDate: row.transaction_date as string,
+          // Signed for the cash model: a SPEND leaves the account.
+          amount: row.transaction_type === "SPEND" ? -Number(row.total) : Number(row.total),
+          category: (row.reference as string | null) ?? undefined,
+        }));
 
-      const { count: accountCount, error: accountError } = await client
-        .from("xero_accounts")
-        .select("id", { count: "exact", head: true })
-        .eq("organisation_id", organisationId);
-      if (accountError) throw accountError;
+      // Every bank account's balance on the most recent date any of them was reported, summed.
+      // Taking each account's own latest row instead would add balances struck on different
+      // days, which is a figure that was never true at any single moment.
+      const latestAsAt = (balances ?? [])[0]?.as_at as string | undefined;
+      const onLatestDate = (balances ?? []).filter((row) => row.as_at === latestAsAt);
 
       return {
-        // A running total of imported movements is not a reconciled balance. Until the Xero
-        // connector reports the account balance itself, this stays explicitly unknown.
-        bankBalance: (accountCount ?? 0) > 0 ? movements.reduce((total, m) => total + Number(m.amount), 0) : null,
+        bankBalance:
+          latestAsAt === undefined
+            ? null
+            : onLatestDate.reduce((total, row) => total + Number(row.closing_balance), 0),
+        bankBalanceAsAt: latestAsAt ?? null,
         movements,
-        commitments: (commitments ?? []).map((row) => ({
-          dueDate: row.due_date as string,
-          category: row.category as string,
-          amount: Number(row.amount),
-          description: (row.description as string | null) ?? undefined,
-        })),
+        commitments: [
+          ...(commitments ?? []).map((row) => ({
+            dueDate: row.due_date as string,
+            category: row.category as string,
+            amount: Number(row.amount),
+            description: (row.description as string | null) ?? undefined,
+          })),
+          /*
+           * A bill with no due date is still owed. It is dated to its invoice date rather than
+           * dropped, which counts it against available cash sooner than reality — the safe
+           * direction for a figure the owner decides how much to spend against.
+           */
+          ...(bills ?? [])
+            .filter((row) => (row.status as string | null) !== "VOIDED" && (row.status as string | null) !== "DELETED")
+            .map((row) => ({
+              dueDate: (row.due_date as string | null) ?? (row.invoice_date as string),
+              category: "supplier bill",
+              amount: Number(row.amount_due),
+              description: (row.contact_name as string | null) ?? undefined,
+            })),
+        ],
       };
     },
   };
