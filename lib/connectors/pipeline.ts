@@ -46,6 +46,7 @@ import { createXeroRepository } from "@/lib/repositories/xero-repository";
 import { calculateAndPublish, type CalculationResult } from "@/lib/reporting/calculate";
 import { runReconciliation } from "@/lib/reporting/reconcile";
 import { collectDataQuality, persistDataQuality } from "@/lib/reporting/data-quality-run";
+import { exportToSheets, type SheetsExportResult } from "@/lib/reporting/sheets-export";
 import type { ReconciliationSummary } from "@/lib/monitoring/reconciliation";
 import { addDays, toBusinessDate } from "@/lib/financial/dates";
 
@@ -89,6 +90,8 @@ export interface RefreshResult {
   reconciliation: ReconciliationSummary | null;
   /** Number of data-quality results recorded, or null when collecting them failed. */
   dataQualityChecks: number | null;
+  /** The Google Sheets export, or null when it is not configured or failed. */
+  sheets: SheetsExportResult | null;
   /** True when every sync succeeded or was skipped as already done. */
   allSucceeded: boolean;
 }
@@ -199,6 +202,14 @@ export async function refreshEverything(
       return null;
     });
 
+  // Last, and never allowed to fail the run. The canonical data is already in Supabase; the
+  // workbook is a copy of it, and a copy that could not be written must not discard the import
+  // that produced it.
+  const sheets = await exportWorkbook(client, options, today).catch((error: unknown) => {
+    console.error(`Sheets export failed: ${(error as Error).message}`);
+    return null;
+  });
+
   return {
     startedAt,
     finishedAt: new Date().toISOString(),
@@ -207,6 +218,7 @@ export async function refreshEverything(
     calculation,
     reconciliation,
     dataQualityChecks,
+    sheets,
     allSucceeded: syncs.every((sync) => sync.outcome.status !== "failed"),
   };
 }
@@ -526,4 +538,34 @@ function xeroEnvironment(): { clientId: string; clientSecret: string } | null {
   const clientId = process.env.XERO_CLIENT_ID;
   const clientSecret = process.env.XERO_CLIENT_SECRET;
   return clientId && clientSecret ? { clientId, clientSecret } : null;
+}
+
+/** Days of the P&L written into the workbook. Long enough to read a quarter's shape. */
+const SHEETS_WINDOW_DAYS = 90;
+
+/**
+ * Writes the Google Sheets workbook, when it is configured.
+ *
+ * Returns null rather than throwing when the credentials are absent: an organisation that has
+ * not set up Sheets is not in an error state, and reporting one would bury the refreshes that
+ * did work under a failure about an optional surface.
+ */
+async function exportWorkbook(
+  client: SupabaseClient,
+  options: RefreshOptions,
+  today: string,
+): Promise<SheetsExportResult | null> {
+  const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
+  const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const privateKey = process.env.GOOGLE_PRIVATE_KEY;
+  if (!spreadsheetId || !clientEmail || !privateKey) return null;
+
+  return exportToSheets(client, {
+    organisationId: options.organisationId,
+    businessTimezone: options.businessTimezone,
+    today,
+    range: { from: addDays(today, -(SHEETS_WINDOW_DAYS - 1)), to: today },
+    spreadsheetId,
+    credentials: { clientEmail, privateKey },
+  });
 }

@@ -31,7 +31,8 @@
     "map:xero": "node scripts/map-xero-accounts.mjs",
     "set:password": "node scripts/set-dashboard-password.mjs",
     "seed:inventory": "node scripts/seed-inventory-settings.mjs",
-    "seed:targets": "tsx scripts/seed-metric-targets.mts"
+    "seed:targets": "tsx scripts/seed-metric-targets.mts",
+    "export:sheets": "tsx scripts/export-sheets.mts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",

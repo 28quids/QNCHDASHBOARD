@@ -17,7 +17,7 @@ Internal business intelligence and financial-control system for QNCH. Supabase/P
 | Meta connector | Complete |
 | TikTok Ads connector | Complete — credentials outstanding |
 | Xero connector | Complete — credentials outstanding |
-| Google Sheets export | Not built — service account outstanding |
+| Google Sheets export | Complete — service account outstanding |
 
 The engine is pure: nothing in `lib/financial` reads the database or decides policy. Connectors
 write source facts, `lib/reporting` shapes them into engine inputs, and the dashboard presents
@@ -63,8 +63,12 @@ The list below is the template.
 | `TIKTOK_ADVERTISER_ID` | The numeric advertiser id. `npm run tiktok:connect -- --list` prints the ones the token can reach. |
 | `XERO_CLIENT_ID` / `XERO_CLIENT_SECRET` | The Xero app, from developer.xero.com. These identify QNCH's application, not the organisation. |
 | `XERO_REDIRECT_URI` | Optional. Defaults to `http://localhost:5478/callback`, which must be registered on the app. |
+| `GOOGLE_SERVICE_ACCOUNT_EMAIL` | The service account, from its JSON key file. |
+| `GOOGLE_PRIVATE_KEY` | The `private_key` value from the same file, BEGIN and END lines included. |
+| `GOOGLE_SHEETS_SPREADSHEET_ID` | The id in the workbook's URL, between `/d/` and `/edit`. |
 
-Google Sheets credentials are added when that connector is built.
+The Google variables are optional. Without them the nightly job skips the export rather than
+reporting a failure: an organisation that has not set up Sheets is not in an error state.
 
 `lib/env.ts` validates the server set at startup with zod, so a missing or malformed value
 fails immediately rather than surfacing as an empty dashboard later.
@@ -368,6 +372,46 @@ different dates. The summary breakdown is requested best-effort — a GraphQL fi
 the shop's API version fails the whole query — and falls back to a document carrying only the
 net amount, which is the figure the check actually needs.
 
+## Google Sheets
+
+The workbook is a **presentation surface, not a second source of truth**. Supabase holds the
+canonical history and this writes a readable copy of it. Nothing is ever read back, so a stray
+edit in the spreadsheet can confuse a reader but can never reach the financial model.
+
+1. Google Cloud console → create a service account → create a JSON key.
+2. Enable the Google Sheets API for that project.
+3. **Share the spreadsheet with the service account's email address, as an Editor.** This step
+   is invisible from the Cloud console and is the usual cause of a 403.
+4. Put the three variables above into `.env.local`.
+
+```
+npm run export:sheets -- --dry-run    # build the tabs, write nothing
+npm run export:sheets
+npm run export:sheets -- --from 2026-01-01 --to 2026-08-31
+```
+
+Tabs written: `00_DASHBOARD`, `02_UNIT_ECONOMICS`, `03_DAILY_P&L`, `04_MONTHLY_P&L`,
+`05_MARKETING`, `08_INVENTORY`, `09_CASH`, `14_DATA_QUALITY`. Missing tabs are created; existing
+ones are cleared before rewriting, so a shorter export cannot leave last night's rows underneath
+this one looking like current data.
+
+Four decisions worth knowing:
+
+- **No formulas.** Every figure comes from the engine. A spreadsheet that derives CM3 in a cell
+  will eventually disagree with the code that derives it, and there is no way to tell which is
+  right from inside the spreadsheet.
+- **Numbers are written as numbers**, not as `£1,234`. A column of formatted text sums to
+  nothing, which defeats the point of exporting to a spreadsheet at all.
+- **Values are written raw**, not interpreted. Under Sheets' `USER_ENTERED` mode a SKU like
+  `-ORANGE` becomes a formula error and a code like `1-2` becomes a date.
+- **Tabs are protected with a warning, not a lock.** The risk is an accidental overtype, not a
+  malicious one, and a hard lock would shut the owner out of their own workbook. The protection
+  is added once per tab rather than on every run, or a nightly export would stack another one
+  every night.
+
+The export runs at the end of the nightly refresh and can never fail it: the canonical data is
+already in Supabase, and a copy that could not be written must not discard the import behind it.
+
 ## Financial policy and costs
 
 `npm run seed:policy` records the thirteen decisions of the register as approved, writes the
@@ -452,7 +496,7 @@ Cron is configured in `vercel.json` for 03:00 daily and supplies that header aut
 
 It **fetches from every connected provider and then recalculates** — Shopify catalogue and
 orders, Meta hierarchy and insights, TikTok hierarchy and reports, the Xero ledger and bank
-balance, then the contribution walk. The same pipeline is behind
+balance, then the contribution walk, the reconciliation checks and the Sheets export. The same pipeline is behind
 the **Refresh now** button on the data-quality page, so a manual refresh and the nightly one
 cannot drift apart.
 

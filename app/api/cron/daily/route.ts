@@ -106,6 +106,11 @@ async function handle(request: NextRequest) {
         }
       : null,
     dataQualityChecks: result.dataQualityChecks,
+    sheets: result.sheets
+      ? result.sheets.status === "exported"
+        ? { status: "exported", tabs: result.sheets.tabs.length, cells: result.sheets.cellsWritten }
+        : { status: result.sheets.status }
+      : null,
     published: result.calculation?.status === "calculated" ? result.calculation.published : null,
     orders: result.calculation?.status === "calculated" ? result.calculation.report.summary.orders : null,
     netRevenue:
