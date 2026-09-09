@@ -26,7 +26,7 @@ export function RefreshButton() {
 
       {pending ? (
         <p className="muted small">
-          Fetching from Shopify and Meta, then recalculating. This usually takes under a minute.
+          Fetching from every connected provider, then recalculating. This usually takes under a minute.
         </p>
       ) : null}
 

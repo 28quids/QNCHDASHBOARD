@@ -42,6 +42,27 @@ export function enumerateDates(from: string, to: string): string[] {
 
 export const monthKey = (businessDate: string): string => businessDate.slice(0, 7);
 
+/**
+ * The Monday of the week a business date falls in.
+ *
+ * Weeks start on Monday because that is how UK trading weeks are read, and because a week
+ * boundary that moves with the report's start date would make two reports over overlapping
+ * ranges disagree about which week a day belongs to.
+ */
+export function startOfWeek(businessDate: string): string {
+  const date = new Date(`${assertDate(businessDate)}T00:00:00.000Z`);
+  // getUTCDay is 0 for Sunday, which is six days after the Monday that starts its week.
+  const weekday = date.getUTCDay();
+  return addDays(businessDate, -(weekday === 0 ? 6 : weekday - 1));
+}
+
+function assertDate(businessDate: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(businessDate)) {
+    throw new Error(`Expected a YYYY-MM-DD business date, received "${businessDate}"`);
+  }
+  return businessDate;
+}
+
 export interface DateRange {
   from: string;
   to: string;

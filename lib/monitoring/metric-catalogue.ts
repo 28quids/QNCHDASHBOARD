@@ -12,7 +12,16 @@
  */
 
 export type MetricDirection = "higher_is_better" | "lower_is_better";
-export type MetricBasis = "currency" | "ratio" | "count" | "days";
+/**
+ * What kind of number a metric is, which decides both how it is shown and how a target on it
+ * is entered.
+ *
+ * `percentage` and `multiple` are both ratios and are deliberately kept apart. A 15% margin is
+ * stored as 0.15 while a 3x MER is stored as 3, so collapsing them into one basis would make
+ * `--set mer 3` store 0.03 — a target no account could ever miss, and one that looks entirely
+ * reasonable in the table.
+ */
+export type MetricBasis = "currency" | "percentage" | "multiple" | "count" | "days";
 
 export interface MetricDefinition {
   key: string;
@@ -41,35 +50,35 @@ export const METRIC_CATALOGUE: readonly MetricDefinition[] = [
     key: "refund_rate",
     label: "Refund rate",
     direction: "lower_is_better",
-    basis: "ratio",
+    basis: "percentage",
     description: "Refunds as a share of gross sales.",
   },
   {
     key: "cm1_margin",
     label: "CM1 margin",
     direction: "higher_is_better",
-    basis: "ratio",
+    basis: "percentage",
     description: "Contribution after product costs, as a share of net revenue.",
   },
   {
     key: "cm2_margin",
     label: "CM2 margin",
     direction: "higher_is_better",
-    basis: "ratio",
+    basis: "percentage",
     description: "Contribution after advertising, as a share of net revenue.",
   },
   {
     key: "cm3_margin",
     label: "CM3 margin",
     direction: "higher_is_better",
-    basis: "ratio",
+    basis: "percentage",
     description: "Contribution after variable operating costs, as a share of net revenue.",
   },
   {
     key: "operating_margin",
     label: "Operating margin",
     direction: "higher_is_better",
-    basis: "ratio",
+    basis: "percentage",
     description: "Operating profit as a share of net revenue. Unavailable until fixed costs are configured.",
   },
   {
@@ -83,7 +92,7 @@ export const METRIC_CATALOGUE: readonly MetricDefinition[] = [
     key: "mer",
     label: "MER",
     direction: "higher_is_better",
-    basis: "ratio",
+    basis: "multiple",
     description: "Net revenue per pound of advertising.",
   },
   {
@@ -97,7 +106,7 @@ export const METRIC_CATALOGUE: readonly MetricDefinition[] = [
     key: "roas_headroom",
     label: "ROAS headroom",
     direction: "higher_is_better",
-    basis: "ratio",
+    basis: "multiple",
     description: "MER less break-even ROAS.",
   },
   {
@@ -118,14 +127,14 @@ export const METRIC_CATALOGUE: readonly MetricDefinition[] = [
     key: "meta_roas",
     label: "Meta ROAS",
     direction: "higher_is_better",
-    basis: "ratio",
+    basis: "multiple",
     description: "Meta's own attributed return. A platform claim, never QNCH's measured result.",
   },
   {
     key: "tiktok_roas",
     label: "TikTok ROAS",
     direction: "higher_is_better",
-    basis: "ratio",
+    basis: "multiple",
     description: "TikTok's own attributed return. A platform claim, never QNCH's measured result.",
   },
   {

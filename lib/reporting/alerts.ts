@@ -14,6 +14,7 @@ import type Decimal from "decimal.js";
 import type { CashPosition } from "@/lib/financial/cash";
 import type { InventoryPosition } from "@/lib/financial/inventory";
 import { ratio } from "@/lib/financial/money";
+import { resolveAllEffective } from "@/lib/financial/effective-dating";
 import {
   activeAlerts,
   evaluateMetrics,
@@ -129,6 +130,14 @@ export function assessHealth(
   const evaluations = evaluateMetrics(observations, targets, businessDate);
   const byKey = new Map(evaluations.map((evaluation) => [evaluation.metricKey, evaluation]));
 
+  // The threshold in force per metric, whether or not it was breached. A metric card should say
+  // what it is being held to even when it is passing — a bare "within target" makes the number
+  // impossible to judge without going and looking the threshold up.
+  const inForce = new Map<string, MetricTarget>();
+  for (const target of resolveAllEffective([...targets], businessDate)) {
+    if (!inForce.has(target.metricKey)) inForce.set(target.metricKey, target);
+  }
+
   return {
     // An unconfigured metric evaluates green, so a dashboard with no targets at all would
     // otherwise report perfect health. That is reported as unavailable instead.
@@ -145,14 +154,16 @@ export function assessHealth(
       if (!evaluation) return undefined;
 
       const definition = metricDefinition(metricKey);
-      const target = evaluation.breachedTarget;
-      if (!target) return evaluation.status === "unavailable" ? "not calculable" : "within target";
+      const target = evaluation.breachedTarget ?? inForce.get(metricKey);
+      if (!target) return evaluation.status === "unavailable" ? "not calculable" : undefined;
 
       const wording = target.comparison === "gte" ? "target ≥" : target.comparison === "lte" ? "target ≤" : "target";
       const value =
-        definition?.basis === "ratio"
+        definition?.basis === "percentage"
           ? `${(Number(target.targetValue) * 100).toFixed(1)}%`
-          : String(target.targetValue);
+          : definition?.basis === "multiple"
+            ? `${Number(target.targetValue).toFixed(2)}x`
+            : String(target.targetValue);
       return `${wording} ${value}`;
     },
   };

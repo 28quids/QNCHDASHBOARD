@@ -12,6 +12,7 @@ Internal business intelligence and financial-control system for QNCH. Supabase/P
 | Reporting layer — database to engine to published figures | Complete |
 | Dashboard, authentication, nightly cron | Complete |
 | Targets, alerts and health status | Complete |
+| Custom reporting, saved reports, CSV export | Complete |
 | Meta connector | Complete |
 | TikTok Ads connector | Complete — credentials outstanding |
 | Xero connector | Complete — credentials outstanding |
@@ -287,6 +288,39 @@ Three behaviours are deliberate and worth knowing:
 Every key that can be targeted is listed in `lib/monitoring/metric-catalogue.ts`, which is the
 same catalogue the observation builder reads. A test asserts the two agree — a target stored
 against a key nothing evaluates would never fire, which looks exactly like one always met.
+
+## Custom reporting
+
+`/reports` composes a report from the same metric catalogue the targets use: tick the metrics,
+pick a window and a grain, run it. The whole specification lives in the query string, so a
+report is a shareable link, and the CSV route parses those same parameters rather than
+reimplementing the calculation — an export cannot disagree with the screen it came from.
+
+```
+/reports?metric=net_revenue&metric=cm3_margin&grain=month&timeframe=ytd
+/reports?metric=blended_cac&grain=week&from=2026-01-01&to=2026-06-30
+```
+
+**Every bucket is computed by running the engine over that bucket**, not by aggregating the
+dashboard's figures. Most of these metrics do not sum: a month's CAC is not the sum of its days'
+CACs, and MER is a ratio of two totals rather than a total of ratios. Adding them up produces
+numbers that look right and are not.
+
+A saved report stores the *question*, never the figures, and recomputes on open — so it reflects
+the costs approved now rather than a snapshot from when it was saved. It holds either a named
+timeframe, which keeps moving with today, or a fixed pair of dates, which does not; carrying
+both would leave which one wins to whoever read it next, so exactly one is required.
+
+Three things the table is careful about:
+
+- **A dash is not a zero.** No acquisitions means no CAC; no revenue means no margin.
+- **A clipped bucket is labelled by its dates**, not as the whole month, so a part-month is
+  never shown as though it were comparable with the full ones beside it.
+- **Cash and stock read as unavailable**, because they are positions at an instant rather than
+  activity over a window. They are shown live on their own pages instead.
+
+The CSV writes values unformatted. A spreadsheet has to read them as numbers, and `£1,234` and
+`42.0%` are text — a column of those sums to nothing.
 
 ## Financial policy and costs
 

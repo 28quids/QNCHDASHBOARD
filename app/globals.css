@@ -156,3 +156,45 @@ ol.setup li span { color: var(--accent); font-variant-numeric: tabular-nums; }
 .refresh-result p { margin: 0 0 0.5rem; }
 .refresh-result ul { margin: 0; padding-left: 1.1rem; }
 .refresh-result li { padding: 0.15rem 0; }
+
+/* Custom reports ---------------------------------------------------------------- */
+
+.report-builder { border: 1px solid var(--line); background: var(--surface); padding: 1.25rem 1.5rem; margin-bottom: 2rem; }
+.report-builder fieldset { border: none; margin: 0 0 1.25rem; padding: 0; }
+.report-builder legend {
+  font-size: 0.7rem; letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--faint); padding: 0 0 0.6rem;
+}
+.report-builder > p { margin: 0.85rem 0 0; }
+
+/* Every metric is visible at once. A dropdown of twenty would hide most of what can be asked. */
+.metric-picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.4rem 1rem; }
+.metric-picker label { display: flex; gap: 0.5rem; align-items: baseline; font-size: 0.85rem; cursor: pointer; }
+.metric-picker input { accent-color: var(--accent); }
+
+.report-controls { display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; }
+.report-controls label { display: flex; flex-direction: column; gap: 0.35rem; }
+.report-controls .label,
+.report-save .label { font-size: 0.7rem; letter-spacing: 0.09em; text-transform: uppercase; color: var(--faint); }
+.report-controls select,
+.report-controls input,
+.report-save input {
+  background: var(--bg); border: 1px solid var(--line); color: var(--ink);
+  padding: 0.5rem 0.6rem; font: inherit; font-size: 0.88rem;
+}
+.report-controls select:focus,
+.report-controls input:focus,
+.report-save input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.report-save { display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; margin-bottom: 1.5rem; }
+.report-save label { display: flex; flex-direction: column; gap: 0.35rem; }
+.report-save > p { width: 100%; margin: 0; }
+
+.panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+.panel-head h2 { margin-bottom: 0.5rem; }
+
+.link-button {
+  background: none; border: 1px solid var(--line); color: var(--muted);
+  font: inherit; font-size: 0.8rem; padding: 0.35rem 0.7rem; cursor: pointer; text-decoration: none;
+}
+.link-button:hover { color: var(--ink); border-color: var(--accent); }

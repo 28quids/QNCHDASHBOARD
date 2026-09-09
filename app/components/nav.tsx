@@ -11,6 +11,7 @@ const PAGES = [
   { href: "/customers", label: "Customers" },
   { href: "/inventory", label: "Inventory" },
   { href: "/cash", label: "Cash" },
+  { href: "/reports", label: "Reports" },
   { href: "/data-quality", label: "Data quality" },
 ];
 

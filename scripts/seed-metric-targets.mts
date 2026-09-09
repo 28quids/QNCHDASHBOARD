@@ -47,7 +47,8 @@ if (has("metrics")) {
       description: metric.description.slice(0, 62),
     })),
   );
-  console.log("\nRatio metrics are set as percentages: --set cm3_margin 15 stores 0.15.");
+  console.log("\nPercentage metrics are set as percentages: --set cm3_margin 15 stores 0.15.");
+  console.log("Multiples are set as they read: --set mer 3 stores 3.");
   process.exit(0);
 }
 
@@ -73,7 +74,9 @@ try {
       rows.map((row) => {
         const definition = metricDefinition(row.metric_key);
         const shown =
-          definition?.basis === "ratio" ? `${(Number(row.target_value) * 100).toFixed(1)}%` : String(row.target_value);
+          definition?.basis === "percentage"
+            ? `${(Number(row.target_value) * 100).toFixed(1)}%`
+            : String(row.target_value);
         return {
           metric: row.metric_key,
           target: `${row.comparison === "gte" ? "≥" : row.comparison === "lte" ? "≤" : "="} ${shown}`,
@@ -136,7 +139,7 @@ try {
 
     // Percentages in, ratios stored. The engine's margins are ratios, so a target of 15 rather
     // than 0.15 would never be met and would look like a catastrophic margin instead.
-    const stored = definition.basis === "ratio" ? parsed / 100 : parsed;
+    const stored = definition.basis === "percentage" ? parsed / 100 : parsed;
     const comparison = comparisonFor(definition);
 
     await db.query("begin");
@@ -159,7 +162,7 @@ try {
     );
     await db.query("commit");
 
-    const shown = definition.basis === "ratio" ? `${parsed}% (stored ${stored})` : String(stored);
+    const shown = definition.basis === "percentage" ? `${parsed}% (stored ${stored})` : String(stored);
     console.log(`${definition.label}: ${comparison === "gte" ? "at least" : "no more than"} ${shown}, ${severity}.`);
     console.log(`Effective ${from}. The dashboard picks it up on the next load.`);
     process.exit(0);

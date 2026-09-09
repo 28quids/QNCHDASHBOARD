@@ -219,11 +219,23 @@ describe("assessing health", () => {
   });
 
   /** A margin target of 0.15 must read as 15%, not as 0.15 of a percent. */
-  it("renders a ratio target as a percentage", () => {
+  it("renders a percentage target as a percentage", () => {
     const health = assessHealth({ report: report() }, [
       target({ metricKey: "cm3_margin", targetValue: "0.25" }),
     ], "2026-08-31");
 
     expect(health.noteOf("cm3_margin")).toBe("target ≥ 25.0%");
+  });
+
+  /**
+   * Margins and multiples are both ratios and must not be entered the same way: a 3x MER
+   * stored the way a 15% margin is would become 0.03, a target nothing could ever miss.
+   */
+  it("renders a multiple target as a multiple, not as a percentage", () => {
+    const health = assessHealth({ report: report() }, [
+      target({ metricKey: "mer", targetValue: "3" }),
+    ], "2026-08-31");
+
+    expect(health.noteOf("mer")).toBe("target ≥ 3.00x");
   });
 });

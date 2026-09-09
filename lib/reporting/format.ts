@@ -7,6 +7,7 @@
  */
 
 import type Decimal from "decimal.js";
+import type { MetricBasis } from "@/lib/monitoring/metric-catalogue";
 
 export const UNAVAILABLE = "—";
 
@@ -52,6 +53,36 @@ export function integerDays(value: Numeric): string {
   const numeric = toNumber(value);
   if (numeric === null) return UNAVAILABLE;
   return `${Math.floor(numeric)} days`;
+}
+
+/**
+ * Renders a value the way its metric should be read.
+ *
+ * Kept beside the other formatters rather than in the report page, so the same metric is
+ * formatted identically wherever it appears — a margin shown as a percentage on the dashboard
+ * and as a raw ratio in a report would look like two different figures.
+ */
+export function formatByBasis(value: Numeric, basis: MetricBasis): string {
+  switch (basis) {
+    case "currency":
+      return gbp(value);
+    case "percentage":
+      return percent(value);
+    case "multiple":
+      return multiple(value);
+    case "days":
+      return integerDays(value);
+    case "count": {
+      const numeric = toNumber(value);
+      return numeric === null ? UNAVAILABLE : count(Math.round(numeric));
+    }
+  }
+}
+
+/** The same value unformatted, for a CSV a spreadsheet has to be able to read as a number. */
+export function rawValue(value: Numeric): string {
+  const numeric = toNumber(value);
+  return numeric === null ? "" : String(numeric);
 }
 
 export interface Change {
