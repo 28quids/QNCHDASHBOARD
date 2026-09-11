@@ -189,6 +189,31 @@ Shopify charged, and reports the orders that do not. That identity is what catch
 field being read from the wrong place while each figure still looks plausible alone.
 `npm run reconcile:shopify` runs the same check against everything already stored.
 
+### When the dashboard disagrees with Shopify Analytics
+
+```
+npm run audit:shopify                  # the dashboard's "last 7 days", order by order
+npm run audit:shopify -- --days 30
+```
+
+It lists every order Shopify has in the window, says whether the dashboard counted it and why
+not if it did not, and then walks the money from Shopify's total to the dashboard's net revenue
+one definition at a time. A gap is only a fault once those are removed, and four of them account
+for nearly all of it:
+
+- **The window.** The dashboard's "last 7 days" is today and the six before it. Shopify
+  Analytics' "last 7 days" normally means seven *completed* days and excludes today, so the two
+  are a day apart and never contain the same orders. Compare the same days before reading
+  anything as a discrepancy.
+- **Exclusions.** Test and cancelled orders are stored as source facts and dropped from
+  management reporting.
+- **VAT.** The dashboard reports VAT-exclusive. Shopify's headline total sales is not.
+- **Refunds.** Recognised on the day processed, so a refund against an older order reduces
+  today's net revenue without appearing among today's orders.
+
+An order listed as `NOT IMPORTED` is the one case that *is* a real gap. The script says so and
+prints the command to fix it.
+
 Scripts that import application code run through `tsx`. The library uses extensionless
 imports and the `@/` alias — bundler-style resolution that Node's own ESM resolver does not
 implement, and whose strip-only TypeScript mode also rejects parameter properties.

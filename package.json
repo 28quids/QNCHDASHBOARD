@@ -21,6 +21,7 @@
     "probe:shopify": "tsx scripts/probe-shopify.mts",
     "backfill:shopify": "tsx scripts/backfill-shopify.mts",
     "reconcile:shopify": "tsx scripts/reconcile-shopify.mts",
+    "audit:shopify": "tsx scripts/audit-shopify-window.mts",
     "delete:orders-before": "node scripts/delete-orders-before.mjs",
     "meta:connect": "tsx scripts/register-meta-connection.mts",
     "backfill:meta": "tsx scripts/backfill-meta.mts",
