@@ -92,8 +92,23 @@ The connect scripts run against the same Supabase project the deployment uses, s
 provider locally is immediately live in the deployment. Only Xero needs anything added to the
 host, because only Xero refreshes its own token at runtime.
 
-`lib/env.ts` validates the server set at startup with zod, so a missing or malformed value
-fails immediately rather than surfacing as an empty dashboard later.
+`lib/env.ts` validates the server set with zod, so a missing or malformed value fails with a
+message naming it rather than surfacing as an empty dashboard later.
+
+### The two that are frozen at build time
+
+`NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` are **inlined into the
+bundle when `next build` runs**, which is Next.js behaviour rather than a choice made here. Two
+consequences that are not obvious and cost an afternoon each:
+
+- **Setting one on an already-built deployment does nothing.** The compiled code contains
+  `undefined` and keeps containing it. It has to be rebuilt — redeploy *without* the build cache.
+- **Preview and Production are separate environments.** A value set only on one is absent on the
+  other, and the deployment that lacks it fails at the login page rather than at boot.
+
+The symptom is a 500 on `POST /login` with an opaque `digest` and, in the platform's logs, a
+`ZodError` naming those two. `next.config.ts` now refuses to build on a host when they are
+missing, so that failure should not reach a deployment again.
 
 ## Database migrations
 

@@ -1,4 +1,39 @@
 import type { NextConfig } from "next";
+import { BUILD_TIME_VARIABLES } from "./lib/env";
+
+/**
+ * Refuses to produce a hosted build that cannot work.
+ *
+ * `NEXT_PUBLIC_` values are substituted into the bundle when `next build` runs and frozen
+ * there, so a deployment built without them contains `undefined` and keeps containing it no
+ * matter what is set afterwards. The failure surfaces much later, as a 500 on the login page
+ * with an opaque digest, and looks like a missing variable rather than a stale build.
+ *
+ * Checked only when building on a host, so a local build — for tests, lint, or a quick
+ * typecheck — still works without a configured environment. On a host there is no such thing as
+ * a build worth shipping without these, so failing here costs a deploy and saves a debugging
+ * session.
+ */
+function assertBuildTimeEnvironment(): void {
+  if (!process.env.VERCEL) return;
+
+  const missing = BUILD_TIME_VARIABLES.filter((name) => !process.env[name]);
+  if (missing.length === 0) return;
+
+  throw new Error(
+    [
+      `Cannot build: ${missing.join(" and ")} ${missing.length === 1 ? "is" : "are"} not set.`,
+      "",
+      "These are inlined into the bundle at build time, so a deployment built without them",
+      "cannot be repaired by setting them afterwards — it has to be rebuilt.",
+      "",
+      "Add them to the project's environment variables for this environment (Preview and",
+      "Production are separate), then redeploy without the build cache.",
+    ].join("\n"),
+  );
+}
+
+assertBuildTimeEnvironment();
 
 /**
  * Response headers for a deployment holding QNCH's commercial and customer data.
