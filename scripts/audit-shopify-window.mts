@@ -118,6 +118,12 @@ try {
       return {
         order: node?.name ?? order.externalId.split("/").pop(),
         date: order.businessDate,
+        gross: money(order.grossSales).toFixed(2),
+        disc: money(order.discounts).toFixed(2),
+        ship: money(order.shippingRevenue).toFixed(2),
+        // Shown per order because a store charging no VAT and a store whose VAT this code failed
+        // to read look identical in a total. Here they do not.
+        vat: money(node?.totalTaxSet.shopMoney.amount ?? 0).toFixed(2),
         "shopify total": money(node?.totalPriceSet.shopMoney.amount ?? 0).toFixed(2),
         "net (ex VAT)": money(order.grossSales)
           .minus(money(order.discounts))
@@ -127,6 +133,39 @@ try {
       };
     }),
   );
+
+  /*
+   * How the store is configured, and how much VAT it actually charged.
+   *
+   * Zero VAT across a whole window has two very different explanations — products that are
+   * genuinely zero-rated, or a tax setting that is wrong — and the dashboard cannot tell them
+   * apart. It is worth saying out loud rather than leaving as an absence nobody notices, because
+   * one of the two means the business owes money out of revenue it thinks it has kept.
+   */
+  const taxCharged = sum(
+    inWindow.map((order) => money(byExternalId.get(order.externalId)?.totalTaxSet.shopMoney.amount ?? 0)),
+  );
+  const taxInclusive = collected.some((node) => node.taxesIncluded);
+
+  console.log(`\nTax: the store is configured as ${taxInclusive ? "tax-inclusive" : "tax-exclusive"}, and`);
+  console.log(`Shopify recorded ${taxCharged.toFixed(2)} of tax across these ${inWindow.length} order(s).`);
+  if (taxCharged.isZero()) {
+    console.log("");
+    console.log("No VAT was charged at all. That is correct if the products are zero-rated, and a");
+    console.log("problem if they are not — in which case the VAT is owed out of the revenue above");
+    console.log("and both net revenue and every margin below it are overstated. Worth confirming");
+    console.log("against the VAT registration before trusting the contribution figures.");
+  }
+
+  const freeOrders = inWindow.filter(
+    (order) => money(byExternalId.get(order.externalId)?.totalPriceSet.shopMoney.amount ?? 0).isZero(),
+  );
+  if (freeOrders.length > 0) {
+    console.log(`\n${freeOrders.length} order(s) charged nothing. They still count as orders, which pulls AOV`);
+    console.log("down, and they still carry the cost of the goods shipped — so each one is negative");
+    console.log("contribution. That is the right treatment for a replacement or a full-discount code;");
+    console.log("it is the wrong treatment for a test someone forgot to mark as one.");
+  }
 
   const counted = inWindow.filter((order) => verdictFor(order) === "counted");
   const missing = inWindow.filter((order) => verdictFor(order) === "NOT IMPORTED");
