@@ -17,7 +17,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { bytesFromStored, decryptToken } from "./crypto";
 import { runSync, type SyncOutcome } from "./sync-runner";
 import { createSupabaseSyncStore } from "./supabase-sync-store";
-import { ShopifyClient } from "./shopify/client";
+import { ShopifyClient, ShopifyGraphQlError } from "./shopify/client";
 import {
   buildShopifyOrdersSyncJob,
   buildShopifyPayoutsSyncJob,
@@ -342,7 +342,7 @@ async function refreshShopify(
   return [
     { provider: "shopify", resource: "variants", outcome: variants },
     { provider: "shopify", resource: "orders", outcome: orders },
-    { provider: "shopify", resource: "payouts", outcome: payouts },
+    { provider: "shopify", resource: "payouts", outcome: asCapability(payouts) },
   ];
 }
 
@@ -629,4 +629,28 @@ async function exportWorkbook(
     spreadsheetId,
     credentials: { clientEmail, privateKey },
   });
+}
+
+/**
+ * Reclassifies a sync that failed only because the credentials do not grant the scope.
+ *
+ * Payouts are optional: they feed the revenue reconciliation and nothing else, and a shop that
+ * does not use Shopify Payments has none to read. An app installed without the payments scope is
+ * therefore a deliberate configuration, not a broken one — and left as a failure it turns every
+ * refresh red forever, which is how a genuine failure comes to be scrolled past.
+ *
+ * The `sync_runs` row still records the attempt and its error. What changes is what the run is
+ * reported as, which is the thing a person reads.
+ */
+function asCapability(outcome: SyncOutcome): SyncOutcome {
+  if (outcome.status !== "failed") return outcome;
+  if (!(outcome.error instanceof ShopifyGraphQlError) || !outcome.error.isMissingScope) return outcome;
+
+  return {
+    status: "skipped",
+    reason: "not_permitted",
+    jobKey: outcome.jobKey,
+    detail:
+      "the Shopify app has no payments scope, so settlements cannot be read. Grant read_shopify_payments and reinstall to enable the revenue reconciliation.",
+  };
 }

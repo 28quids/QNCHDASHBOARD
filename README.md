@@ -138,9 +138,8 @@ connections and current row counts, and checks that `ORGANISATION_ID` resolves t
 ## Connecting Shopify
 
 Create a custom app in the Shopify admin (Settings → Apps and sales channels → Develop apps),
-grant it `read_orders`, `read_all_orders`, `read_products`, `read_inventory`, `read_locations`,
-`read_customers` and `read_shopify_payments_payouts`, install it, then put the **Admin API
-access token** — the value beginning `shpat_`, not the `shpss_` API secret key — into
+grant it `read_orders`, `read_all_orders`, `read_products`, `read_inventory`, `read_locations`
+and `read_customers`, install it, then put the **Admin API access token** — the value beginning `shpat_`, not the `shpss_` API secret key — into
 `.env.local` along with the `myshopify.com` host.
 
 ```
@@ -172,6 +171,18 @@ catches orders edited later, such as one refunded weeks after it was placed.
 Re-running a window that already succeeded is a no-op, which is what makes a retried cron
 safe. Pass `--force` to re-read it anyway after a connector fix — orders upsert on their
 Shopify id, so it restates rather than duplicates.
+
+### Settlements are optional
+
+`read_shopify_payments` (or `read_shopify_payments_accounts`) additionally allows payouts to be
+read, which is what gives the revenue reconciliation its second source. Without it the payout
+sync reports **not permitted** rather than failing: a shop that does not use Shopify Payments has
+no settlements to read, so an app installed without the scope is a deliberate configuration and
+no retry changes it. Reported as a failure it would turn every refresh red forever, which is how
+a genuine failure comes to be scrolled past.
+
+To enable it, add the scope to the custom app, reinstall it, and re-run `npm run shopify:connect`
+with the new token — reinstalling issues a new one.
 
 Every run checks that each order's gross, discounts, shipping and tax add back to the total
 Shopify charged, and reports the orders that do not. That identity is what catches a money

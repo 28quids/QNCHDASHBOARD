@@ -25,6 +25,17 @@ export class ShopifyGraphQlError extends Error {
     super(`Shopify GraphQL error: ${errors.map((error) => error.message).join("; ")}`);
     this.name = "ShopifyGraphQlError";
   }
+
+  /**
+   * True when the app's access token lacks a scope the query needs.
+   *
+   * Worth separating from every other GraphQL error because it is not a fault and no retry
+   * fixes it: someone has to grant the scope and reinstall the app. Treated as a failure it
+   * recurs on every sync forever, and a line that is always red is a line nobody reads.
+   */
+  get isMissingScope(): boolean {
+    return this.errors.some((error) => /access denied|required access|access scope/i.test(error.message));
+  }
 }
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));

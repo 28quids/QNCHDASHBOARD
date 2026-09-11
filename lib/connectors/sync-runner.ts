@@ -67,7 +67,14 @@ export interface SyncStore {
 }
 
 export type SyncOutcome =
-  | { status: "skipped"; reason: "already_succeeded"; jobKey: string }
+  /**
+   * Not run, and correctly so.
+   *
+   * `already_succeeded` is the idempotency guard — this exact job has been done. `not_permitted`
+   * is a capability the credentials do not grant, which is a configuration answer rather than a
+   * fault: reporting it as a failure every night is how a red line stops being read.
+   */
+  | { status: "skipped"; reason: "already_succeeded" | "not_permitted"; jobKey: string; detail?: string }
   | { status: "succeeded"; jobKey: string; pages: number; received: number; written: number }
   | { status: "failed"; jobKey: string; pages: number; received: number; written: number; error: Error };
 

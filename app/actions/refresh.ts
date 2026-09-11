@@ -35,10 +35,18 @@ export async function refreshNow(): Promise<RefreshState> {
     });
 
     const detail = result.syncs.map((sync) => {
-      const written =
-        sync.outcome.status === "succeeded" ? ` (${sync.outcome.written} rows)` : "";
-      const error = sync.outcome.status === "failed" ? `: ${sync.outcome.error.message}` : "";
-      return `${sync.provider} ${sync.resource} — ${sync.outcome.status}${written}${error}`;
+      const { outcome } = sync;
+      const written = outcome.status === "succeeded" ? ` (${outcome.written} rows)` : "";
+      const error = outcome.status === "failed" ? `: ${outcome.error.message}` : "";
+      // A skipped run says why. "Skipped" alone reads as something went wrong and was given up
+      // on, when it usually means the work was already done or was never permitted.
+      const skipped =
+        outcome.status === "skipped"
+          ? outcome.reason === "not_permitted"
+            ? `: not permitted — ${outcome.detail ?? "the credentials do not grant this"}`
+            : ": already done this run"
+          : "";
+      return `${sync.provider} ${sync.resource} — ${outcome.status}${written}${skipped}${error}`;
     });
 
     if (result.calculation?.status === "not_approved") {
