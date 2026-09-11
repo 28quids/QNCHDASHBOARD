@@ -13,6 +13,7 @@ const PAGES = [
   { href: "/cash", label: "Cash" },
   { href: "/reports", label: "Reports" },
   { href: "/data-quality", label: "Data quality" },
+  { href: "/settings", label: "Targets" },
 ];
 
 export function Nav() {

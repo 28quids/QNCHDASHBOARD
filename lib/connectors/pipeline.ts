@@ -103,11 +103,39 @@ interface ProviderConnection {
   token: string;
 }
 
+/** A connection that exists and cannot be used, with the reason, so it is reported not dropped. */
+interface UnusableConnection {
+  id: string;
+  provider: string;
+  reason: string;
+}
+
+/**
+ * The stored ciphertext out of an embedded `integration_tokens` row.
+ *
+ * PostgREST decides an embed's cardinality from the constraints, and `connection_id` is both the
+ * primary key of `integration_tokens` and a foreign key to `integration_connections` — so the
+ * relationship is one-to-one and the embed arrives as an **object**, not an array of one.
+ *
+ * Handling only the array shape is how every connection came to be silently skipped: the guard
+ * read `undefined`, concluded the connection had no token, and dropped it. Both shapes are
+ * accepted here because the cardinality PostgREST infers is not something this code should be
+ * betting on.
+ */
+export function readEncryptedToken(embedded: unknown): string | null {
+  if (!embedded) return null;
+
+  const row = Array.isArray(embedded) ? embedded[0] : embedded;
+  const token = (row as { encrypted_refresh_token?: string } | undefined)?.encrypted_refresh_token;
+
+  return typeof token === "string" && token.length > 0 ? token : null;
+}
+
 async function loadConnections(
   client: SupabaseClient,
   organisationId: string,
   encryptionKey: string,
-): Promise<ProviderConnection[]> {
+): Promise<{ usable: ProviderConnection[]; unusable: UnusableConnection[] }> {
   const { data, error } = await client
     .from("integration_connections")
     .select("id, provider, external_account_id, status, integration_tokens(encrypted_refresh_token)")
@@ -115,23 +143,39 @@ async function loadConnections(
     .eq("status", "active");
   if (error) throw error;
 
-  return (data ?? []).flatMap((row) => {
-    const tokens = row.integration_tokens as unknown as { encrypted_refresh_token: string }[] | null;
-    const encrypted = Array.isArray(tokens) ? tokens[0]?.encrypted_refresh_token : undefined;
-    // A connection with no stored token cannot be used. Skipped rather than throwing, so one
-    // half-configured provider does not block the rest of the refresh.
-    if (!encrypted) return [];
+  const usable: ProviderConnection[] = [];
+  const unusable: UnusableConnection[] = [];
 
-    return [
-      {
-        id: row.id as string,
-        provider: row.provider as string,
+  for (const row of data ?? []) {
+    const id = row.id as string;
+    const provider = row.provider as string;
+    const encrypted = readEncryptedToken(row.integration_tokens);
+
+    if (!encrypted) {
+      unusable.push({ id, provider, reason: "no stored token; re-run the connect script" });
+      continue;
+    }
+
+    try {
+      usable.push({
+        id,
+        provider,
         externalAccountId: row.external_account_id as string,
-        // Supabase returns bytea as a hex string over PostgREST, not as a Buffer.
         token: decryptToken(bytesFromStored(encrypted), encryptionKey),
-      },
-    ];
-  });
+      });
+    } catch {
+      // Almost always TOKEN_ENCRYPTION_KEY differing from the one that encrypted it. Reported
+      // rather than thrown, so one unreadable provider does not abandon the others — but
+      // reported, because a refresh that quietly skipped a provider looks like a clean run.
+      unusable.push({
+        id,
+        provider,
+        reason: "stored token could not be decrypted; TOKEN_ENCRYPTION_KEY does not match the one that encrypted it",
+      });
+    }
+  }
+
+  return { usable, unusable };
 }
 
 export async function refreshEverything(
@@ -143,10 +187,27 @@ export async function refreshEverything(
   const discriminator = options.jobDiscriminator ?? startedAt.slice(0, 16);
 
   const store = createSupabaseSyncStore(client);
-  const connections = await loadConnections(client, options.organisationId, options.encryptionKey);
+  const { usable, unusable } = await loadConnections(client, options.organisationId, options.encryptionKey);
   const syncs: RefreshResult["syncs"] = [];
 
-  for (const connection of connections) {
+  // A connection that exists and cannot be used is a failure of this run, not an absence. It was
+  // previously dropped in silence, which made a refresh that synced nothing report success.
+  for (const connection of unusable) {
+    syncs.push({
+      provider: connection.provider,
+      resource: "connection",
+      outcome: {
+        status: "failed",
+        jobKey: `${connection.provider}:connection`,
+        pages: 0,
+        received: 0,
+        written: 0,
+        error: new Error(connection.reason),
+      },
+    });
+  }
+
+  for (const connection of usable) {
     try {
       if (connection.provider === "shopify") {
         syncs.push(...(await refreshShopify(client, store, connection, options, today, discriminator)));

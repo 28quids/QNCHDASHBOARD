@@ -301,6 +301,15 @@ business timezone, so a payment made late on the 1st is not reported on the 31st
 The dashboard's GREEN / AMBER / RED status comes entirely from `metric_targets`. No threshold
 is written in code, so nothing in this repository decides what "good" looks like for QNCH.
 
+**Set them in the dashboard at `/settings`**, which lists every metric that can be targeted with
+its current threshold. The CLI below does the same thing for scripted setup; both go through the
+same `set_metric_target` database function, so they cannot diverge on the part that matters — a
+target is versioned by `effective_from`, so replacing one is an end-date plus an insert, and
+those have to happen together or the metric is briefly unjudged or briefly judged twice.
+
+Changes apply from today. Periods already reported keep the target they were judged against, and
+"stop judging" end-dates a target rather than deleting it, for the same reason.
+
 ```
 npm run seed:targets -- --metrics                    # what can be targeted
 npm run seed:targets -- --set cm3_margin 15 --severity red

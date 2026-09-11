@@ -92,12 +92,22 @@ export interface DatedAmount {
   amount: DecimalInput;
 }
 
-const totalInRange = (entries: readonly DatedAmount[], period: DateRange): Decimal =>
-  sum(
-    entries
-      .filter((entry) => entry.businessDate >= period.from && entry.businessDate <= period.to)
-      .map((entry) => entry.amount),
-  );
+/**
+ * The total in the period, or null when the source does not exist at all.
+ *
+ * Null and zero are different answers and must not be collapsed. An unconnected provider
+ * contributes no rows, and totalling no rows gives zero — which then reads as "this source says
+ * nothing was spent" rather than "there is no source". The first is a finding worth chasing; the
+ * second is a setup step not yet done.
+ */
+const totalInRange = (entries: readonly DatedAmount[] | null, period: DateRange): Decimal | null =>
+  entries === null
+    ? null
+    : sum(
+        entries
+          .filter((entry) => entry.businessDate >= period.from && entry.businessDate <= period.to)
+          .map((entry) => entry.amount),
+      );
 
 /**
  * Total advertising spend against the money that actually left the bank.
@@ -109,8 +119,8 @@ const totalInRange = (entries: readonly DatedAmount[], period: DateRange): Decim
  * name would be a guess presented as a fact.
  */
 export function reconcileAdvertisingSpend(
-  platformSpend: readonly DatedAmount[],
-  accountingSpend: readonly DatedAmount[],
+  platformSpend: readonly DatedAmount[] | null,
+  accountingSpend: readonly DatedAmount[] | null,
   period: DateRange,
   tolerance: DecimalInput = 0,
 ): ReconciliationResult {
@@ -129,8 +139,8 @@ export function reconcileAdvertisingSpend(
  */
 export function reconcilePlatformSpend(
   platform: "meta" | "tiktok",
-  platformSpend: readonly DatedAmount[],
-  accountingSpend: readonly DatedAmount[],
+  platformSpend: readonly DatedAmount[] | null,
+  accountingSpend: readonly DatedAmount[] | null,
   period: DateRange,
   tolerance: DecimalInput = 0,
 ): ReconciliationResult {
@@ -145,8 +155,8 @@ export function reconcilePlatformSpend(
 
 /** Shopify order revenue against processor settlements for the same period. */
 export function reconcileShopifyPayouts(
-  shopifyRevenue: readonly DatedAmount[],
-  payouts: readonly DatedAmount[],
+  shopifyRevenue: readonly DatedAmount[] | null,
+  payouts: readonly DatedAmount[] | null,
   period: DateRange,
   tolerance: DecimalInput = 0,
 ): ReconciliationResult {

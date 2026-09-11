@@ -198,3 +198,20 @@ ol.setup li span { color: var(--accent); font-variant-numeric: tabular-nums; }
   font: inherit; font-size: 0.8rem; padding: 0.35rem 0.7rem; cursor: pointer; text-decoration: none;
 }
 .link-button:hover { color: var(--ink); border-color: var(--accent); }
+
+/* Target settings ---------------------------------------------------------------- */
+
+.target-form { display: flex; gap: 0.5rem; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+.target-input { display: flex; align-items: center; gap: 0.25rem; }
+.target-input .unit { color: var(--faint); font-size: 0.8rem; }
+.target-form input[type="number"] {
+  width: 6rem; text-align: right; font-variant-numeric: tabular-nums;
+  background: var(--bg); border: 1px solid var(--line); color: var(--ink);
+  padding: 0.4rem 0.5rem; font: inherit; font-size: 0.88rem;
+}
+.target-form select {
+  background: var(--bg); border: 1px solid var(--line); color: var(--ink);
+  padding: 0.4rem 0.5rem; font: inherit; font-size: 0.88rem;
+}
+.target-form input:focus, .target-form select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.target-form button[type="submit"] { padding: 0.4rem 0.8rem; font-size: 0.85rem; }

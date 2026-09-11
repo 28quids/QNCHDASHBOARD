@@ -72,13 +72,17 @@ export async function runReconciliation(
     reconcileShopifyPayouts(orders, payouts, range, toleranceFor(orders, payouts, rate)),
   );
 
+
   // Per platform where the chart of accounts dedicates an account to one, and in total where it
   // does not. Both are reported when both are possible: a total that matches can still hide two
   // platforms wrong in opposite directions.
   for (const platform of ["meta", "tiktok"] as const) {
     const platformRows = adSpend.filter((row) => row.platform === platform);
-    const accountingRows = accountingSpend.filter((row) => row.platform === platform);
-    if (platformRows.length === 0 && accountingRows.length === 0) continue;
+    // Null propagates: with no accounting source there is nothing to compare this platform
+    // against, and the per-platform check says so rather than reporting the whole spend as a gap.
+    const accountingRows =
+      accountingSpend === null ? null : accountingSpend.filter((row) => row.platform === platform);
+    if (platformRows.length === 0 && (accountingRows?.length ?? 0) === 0 && accountingSpend !== null) continue;
 
     results.push(
       reconcilePlatformSpend(
@@ -105,9 +109,13 @@ export async function runReconciliation(
 }
 
 /** A tolerance proportional to the larger side, so it scales with the money involved. */
-function toleranceFor(a: readonly DatedAmount[], b: readonly DatedAmount[], rate: number): string {
-  const total = (rows: readonly DatedAmount[]) =>
-    rows.reduce((sum, row) => sum.plus(money(row.amount).abs()), money(0));
+function toleranceFor(
+  a: readonly DatedAmount[] | null,
+  b: readonly DatedAmount[] | null,
+  rate: number,
+): string {
+  const total = (rows: readonly DatedAmount[] | null) =>
+    (rows ?? []).reduce((sum, row) => sum.plus(money(row.amount).abs()), money(0));
 
   const largest = total(a).greaterThan(total(b)) ? total(a) : total(b);
   return largest.times(rate).toFixed(4);
@@ -154,12 +162,26 @@ async function loadChargedRevenue(
     .filter((row) => row.businessDate >= range.from && row.businessDate <= range.to);
 }
 
-/** Settlements, gross of fees, so both sides of the comparison describe the same money. */
+/**
+ * Settlements, gross of fees, so both sides of the comparison describe the same money.
+ *
+ * Returns null when the organisation has no payouts at all, which means the settlement source
+ * has never been populated — either the sync has not run or the shop does not use Shopify
+ * Payments. That is an absent source, not a period in which nothing settled, and the difference
+ * decides whether the check is a finding or a setup step.
+ */
 async function loadPayouts(
   client: SupabaseClient,
   organisationId: string,
   range: DateRange,
-): Promise<DatedAmount[]> {
+): Promise<DatedAmount[] | null> {
+  const { count, error: countError } = await client
+    .from("shopify_payouts")
+    .select("id", { count: "exact", head: true })
+    .eq("organisation_id", organisationId);
+  if (countError) throw countError;
+  if ((count ?? 0) === 0) return null;
+
   const { data, error } = await client
     .from("shopify_payouts")
     .select("payout_date, charges, refunds, net_amount, fees")
@@ -222,14 +244,18 @@ async function loadAccountingAdvertising(
   client: SupabaseClient,
   organisationId: string,
   range: DateRange,
-): Promise<PlatformAmount[]> {
+): Promise<PlatformAmount[] | null> {
   const { data: rules, error: ruleError } = await client
     .from("expense_mapping_rules")
     .select("xero_account_id, financial_category, ad_platform, effective_from, effective_to")
     .eq("organisation_id", organisationId)
     .eq("financial_category", "acquisition");
   if (ruleError) throw ruleError;
-  if (!rules || rules.length === 0) return [];
+
+  // No acquisition account mapped means there is no accounting side to compare against — Xero
+  // is not connected, or its chart of accounts has not been mapped yet. Returning an empty list
+  // would total to zero and report the platforms' entire spend as an unexplained difference.
+  if (!rules || rules.length === 0) return null;
 
   const { data, error } = await client
     .from("xero_bank_transactions")

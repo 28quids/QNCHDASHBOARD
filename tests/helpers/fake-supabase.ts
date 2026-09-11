@@ -81,7 +81,7 @@ function parseEmbeds(projection: string, table: string): string[] {
   }
   return names;
 }
-type Result = { data: unknown; error: unknown };
+type Result = { data: unknown; error: unknown; count?: number };
 
 /** Comparison filters, evaluated with the same string/number ordering PostgREST would use. */
 type Comparison = [column: string, value: unknown, test: (a: never, b: never) => boolean];
@@ -100,6 +100,8 @@ class FakeQuery implements PromiseLike<Result> {
   private readonly negations: Array<[string, unknown]> = [];
   private readonly orderings: Array<[string, boolean]> = [];
   private embeds: string[] = [];
+  private counting = false;
+  private headOnly = false;
   private limitTo: number | null = null;
   private cardinality: "many" | "one" | "maybe" = "many";
 
@@ -148,11 +150,17 @@ class FakeQuery implements PromiseLike<Result> {
   }
 
   /**
-   * Whole rows are returned regardless of the projection, but the projection is parsed for
-   * embedded relations, which do have to be attached for the caller to find them.
+   * Whole rows are returned regardless of the projection, but two things about it matter.
+   *
+   * The projection is parsed for embedded relations, which have to be attached for the caller to
+   * find them. And `{ count, head }` is honoured, because a caller using it is asking "does this
+   * table hold anything at all" — a question whose answer changes behaviour, so a fake that
+   * quietly returned an undefined count would let a wrong answer pass a test.
    */
-  select(projection?: string): this {
+  select(projection?: string, options?: { count?: "exact" | "planned" | "estimated"; head?: boolean }): this {
     if (projection) this.embeds = parseEmbeds(projection, this.table);
+    if (options?.count) this.counting = true;
+    if (options?.head) this.headOnly = true;
     return this;
   }
 
@@ -302,6 +310,10 @@ class FakeQuery implements PromiseLike<Result> {
   }
 
   private shape(matched: Row[]): Result {
+    if (this.counting) {
+      // `head` asks for the count without the rows, which is what makes an existence check cheap.
+      return { data: this.headOnly ? null : matched, error: null, count: matched.length };
+    }
     if (this.cardinality === "many") return { data: matched, error: null };
     if (matched.length === 1) return { data: matched[0], error: null };
     if (this.cardinality === "maybe" && matched.length === 0) return { data: null, error: null };
@@ -327,7 +339,8 @@ export function createFakeSupabase(seed: Record<string, Row[]> = {}) {
   const client = {
     from(table: string) {
       return {
-        select: (projection?: string) => new FakeQuery(tables, table, "select", null).select(projection),
+        select: (projection?: string, options?: { count?: "exact" | "planned" | "estimated"; head?: boolean }) =>
+          new FakeQuery(tables, table, "select", null).select(projection, options),
         insert: (payload: Row | Row[]) => new FakeQuery(tables, table, "insert", payload),
         update: (payload: Row) => new FakeQuery(tables, table, "update", payload),
         upsert: (payload: Row | Row[], options?: { onConflict?: string }) =>

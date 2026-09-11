@@ -61,6 +61,17 @@ export async function refreshNow(): Promise<RefreshState> {
       );
     }
 
+    // "Nothing ran" is not "everything succeeded". An empty sync list means no provider is
+    // connected — or every connection was unusable — and reporting that as a clean refresh is
+    // how a dashboard comes to show data that stopped updating a fortnight ago.
+    if (result.syncs.length === 0) {
+      return {
+        status: "partial",
+        message: "Nothing was synced: no provider is connected. Figures below are unchanged.",
+        detail,
+      };
+    }
+
     return {
       status: result.allSucceeded ? "ok" : "partial",
       message: result.allSucceeded

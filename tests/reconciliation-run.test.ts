@@ -362,3 +362,84 @@ describe("advertising date coverage", () => {
     expect(results.find((result) => result.checkKey === "advertising.coverage")?.status).toBe("pass");
   });
 });
+
+describe("a source that does not exist yet", () => {
+  /**
+   * Zero and absent are different answers. An unconnected provider contributes no rows, and
+   * totalling no rows gives zero — which reads as "this source says nothing was spent" rather
+   * than "there is no source". The first sends someone looking for missing money; the second is
+   * a setup step not yet done.
+   */
+  it("reports advertising as not applicable when no acquisition account is mapped", async () => {
+    const { client: supabase } = createFakeSupabase(
+      seed({
+        ad_accounts: [{ id: "acct-1", organisation_id: ORGANISATION, platform: "meta", external_id: "act_1" }],
+        ad_daily_metrics: [
+          {
+            id: "m-1",
+            organisation_id: ORGANISATION,
+            ad_account_id: "acct-1",
+            entity_id: null,
+            metric_date: "2026-08-05",
+            spend: "610.65",
+          },
+        ],
+      }),
+    );
+
+    const summary = await runReconciliation(as(supabase), {
+      organisationId: ORGANISATION,
+      businessTimezone: TIMEZONE,
+      range: RANGE,
+    });
+
+    const total = summary.results.find((result) => result.reconciliationKey === "ad_spend.total");
+    expect(total?.status).toBe("not_applicable");
+    // The platform side is still reported, so the figure is visible without being called a gap.
+    expect(total?.sourceAValue?.toString()).toBe("610.65");
+    expect(total?.sourceBValue).toBeNull();
+  });
+
+  /** Never-synced payouts are not a period in which nothing settled. */
+  it("reports settlements as not applicable when no payout has ever been imported", async () => {
+    const { client: supabase } = createFakeSupabase(
+      seed({
+        shopify_orders: [
+          {
+            id: "o-1",
+            organisation_id: ORGANISATION,
+            ordered_at: "2026-08-05T10:00:00Z",
+            is_test: false,
+            cancelled_at: null,
+            gross_sales: "565.80",
+            discounts: "0.00",
+            shipping_revenue: "0.00",
+            tax: "0.00",
+          },
+        ],
+      }),
+    );
+
+    const summary = await runReconciliation(as(supabase), {
+      organisationId: ORGANISATION,
+      businessTimezone: TIMEZONE,
+      range: RANGE,
+    });
+
+    const payouts = summary.results.find((result) => result.reconciliationKey === "revenue.shopify_payouts");
+    expect(payouts?.status).toBe("not_applicable");
+  });
+
+  /** An overall status of "needs review" is not "matched": something could not be checked. */
+  it("summarises an unreconcilable check as needing review rather than as matched", async () => {
+    const { client: supabase } = createFakeSupabase(seed());
+
+    const summary = await runReconciliation(as(supabase), {
+      organisationId: ORGANISATION,
+      businessTimezone: TIMEZONE,
+      range: RANGE,
+    });
+
+    expect(summary.status).toBe("needs_review");
+  });
+});
