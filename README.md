@@ -58,30 +58,39 @@ There is deliberately no committed `.env.example`. Every `.env*` file is ignored
 exception, so nothing in the repository can hold a value that looks like real configuration.
 The list below is the template.
 
+**Which variables belong where matters.** Only six are needed by the running application; the
+rest are read by local scripts and should never be added to a hosting provider. Every secret
+that exists in a place it is not needed is a secret with a larger blast radius than it has to
+have.
+
+### Needed by the deployed application
+
 | Variable | Where it comes from |
 |---|---|
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase → Project Settings → API. Public; ships to the browser. |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Same page. Public by design; RLS is the boundary, not this key. |
-| `SUPABASE_SERVICE_ROLE_KEY` | Same page, `service_role`. **Bypasses RLS** — server-side only. |
-| `SUPABASE_DB_URL` | Supabase → Connect → Session pooler. Used only by the scripts, never by the app. Percent-encode `@ : / ?` in the password. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Same page, `service_role`. **Bypasses RLS** — the highest-value secret here. |
+| `TOKEN_ENCRYPTION_KEY` | Generate 32 random bytes, base64. Decrypts provider tokens; if lost, every stored token must be reconnected. |
+| `CRON_SECRET` | Generate 32 random bytes. Bearer token for `/api/cron/daily`; Vercel supplies it automatically. |
 | `ORGANISATION_ID` | Printed by `node scripts/seed-organisation.mjs`. Every table is keyed on it. |
-| `TOKEN_ENCRYPTION_KEY` | Generate 32 random bytes, base64. Encrypts provider tokens at rest — if lost, every stored token must be reconnected. |
-| `CRON_SECRET` | Generate 32 random bytes. Bearer token for `/api/cron/daily`. |
-| `SHOPIFY_SHOP_DOMAIN` | The `myshopify.com` host, no scheme and no trailing slash. |
-| `SHOPIFY_ADMIN_TOKEN` | Admin API access token, begins `shpat_`. Not the `shpss_` secret key, and shown only once. |
-| `META_ACCESS_TOKEN` | Meta system user token. Not a user token — see below. |
-| `META_AD_ACCOUNT_ID` | The `act_...` identifier of the ad account. |
-| `TIKTOK_ACCESS_TOKEN` | TikTok developer portal, after an advertiser authorises the app. |
-| `TIKTOK_APP_ID` / `TIKTOK_APP_SECRET` | The app the token was issued for. Used only to list advertisers; never stored. |
-| `TIKTOK_ADVERTISER_ID` | The numeric advertiser id. `npm run tiktok:connect -- --list` prints the ones the token can reach. |
-| `XERO_CLIENT_ID` / `XERO_CLIENT_SECRET` | The Xero app, from developer.xero.com. These identify QNCH's application, not the organisation. |
-| `XERO_REDIRECT_URI` | Optional. Defaults to `http://localhost:5478/callback`, which must be registered on the app. |
-| `GOOGLE_SERVICE_ACCOUNT_EMAIL` | The service account, from its JSON key file. |
-| `GOOGLE_PRIVATE_KEY` | The `private_key` value from the same file, BEGIN and END lines included. |
-| `GOOGLE_SHEETS_SPREADSHEET_ID` | The id in the workbook's URL, between `/d/` and `/edit`. |
 
-The Google variables are optional. Without them the nightly job skips the export rather than
-reporting a failure: an organisation that has not set up Sheets is not in an error state.
+Add `XERO_CLIENT_ID` and `XERO_CLIENT_SECRET` once Xero is connected — the nightly job refreshes
+the token itself and needs the app credentials at runtime. Add the three `GOOGLE_*` variables if
+the Sheets export is wanted; without them the export skips itself rather than failing.
+
+### Local only — never add these to a hosting provider
+
+| Variable | Used by |
+|---|---|
+| `SUPABASE_DB_URL` | The migration and seeding scripts. A direct Postgres connection: the one value most worth keeping on one machine. |
+| `SHOPIFY_SHOP_DOMAIN`, `SHOPIFY_ADMIN_TOKEN` | `shopify:connect` only. The token is stored encrypted in the database afterwards. |
+| `META_ACCESS_TOKEN`, `META_AD_ACCOUNT_ID` | `meta:connect` only. Same. |
+| `TIKTOK_ACCESS_TOKEN`, `TIKTOK_APP_ID`, `TIKTOK_APP_SECRET`, `TIKTOK_ADVERTISER_ID` | `tiktok:connect` only. Same. |
+| `XERO_REDIRECT_URI` | `xero:connect` only. Defaults to `http://localhost:5478/callback`. |
+
+The connect scripts run against the same Supabase project the deployment uses, so connecting a
+provider locally is immediately live in the deployment. Only Xero needs anything added to the
+host, because only Xero refreshes its own token at runtime.
 
 `lib/env.ts` validates the server set at startup with zod, so a missing or malformed value
 fails immediately rather than surfacing as an empty dashboard later.
