@@ -23,7 +23,9 @@ with expected(table_name, migration) as (
     ('financial_policy_decisions', '0003'), ('cost_assumptions', '0003'),
     ('shopify_refunds', '0004'), ('shopify_refund_lines', '0004'),
     ('shopify_payouts', '0004'), ('variant_inventory_settings', '0004'),
-    ('xero_invoices', '0004')
+    ('xero_invoices', '0004'),
+    ('xero_bank_transaction_lines', '0008'), ('xero_bank_balances', '0008'),
+    ('saved_reports', '0009')
 ),
 resolved as (
   select migration, table_name, to_regclass('public.' || quote_ident(table_name)) as oid
@@ -45,20 +47,30 @@ select
 from resolved
 order by migration, table_name;
 
--- 2. Have 0004's two added columns been applied? -------------------------------------
--- information_schema never raises on a missing table, so this is safe unconditionally.
+-- 2. Have the columns later migrations added been applied? ---------------------------
+-- Columns, not just tables: several migrations add to an existing table, so the table
+-- resolving above says nothing about whether that migration ran. information_schema never
+-- raises on a missing table, so this is safe unconditionally.
+with expected(table_name, column_name, migration) as (
+  values
+    ('cost_assumptions', 'period_unit', '0004'),
+    ('inventory_snapshots', 'expected_delivery_date', '0004'),
+    ('xero_accounts', 'account_class', '0008'),
+    ('xero_accounts', 'bank_account_type', '0008'),
+    ('xero_bank_transactions', 'bank_xero_account_id', '0008'),
+    ('xero_bank_transactions', 'is_reconciled', '0008'),
+    ('expense_mapping_rules', 'ad_platform', '0010')
+)
 select
-  'cost_assumptions.period_unit' as column_ref,
-  case when count(*) = 0 then 'MISSING' else 'present' end as state
-from information_schema.columns
-where table_schema = 'public' and table_name = 'cost_assumptions' and column_name = 'period_unit'
-union all
-select
-  'inventory_snapshots.expected_delivery_date',
-  case when count(*) = 0 then 'MISSING' else 'present' end
-from information_schema.columns
-where table_schema = 'public' and table_name = 'inventory_snapshots'
-  and column_name = 'expected_delivery_date';
+  expected.migration,
+  expected.table_name || '.' || expected.column_name as column_ref,
+  case when columns.column_name is null then 'MISSING' else 'present' end as state
+from expected
+left join information_schema.columns
+  on columns.table_schema = 'public'
+ and columns.table_name = expected.table_name
+ and columns.column_name = expected.column_name
+order by expected.migration, column_ref;
 
 -- 3. Which enum types exist? ----------------------------------------------------------
 -- 0001 and 0003 each create enums before their tables. A migration that half-applied
@@ -67,3 +79,24 @@ select typname as enum_type
 from pg_type
 where typnamespace = 'public'::regnamespace and typtype = 'e'
 order by typname;
+
+-- 4. Are the uniqueness rules later migrations depend on in place? --------------------
+-- These are indexes rather than tables or columns, and each one is load-bearing: without
+-- it a re-run appends a row instead of restating one, which is invisible until a table
+-- nobody reads closely has grown a duplicate for every night it ran.
+with expected(index_name, migration, purpose) as (
+  values
+    ('ad_daily_metrics_natural_key', '0007', 'account-level ad spend upserts instead of duplicating'),
+    ('reconciliation_results_natural_key', '0010', 'a reconciliation restates rather than appends'),
+    ('data_quality_results_natural_key', '0010', 'a check reports current state rather than a log')
+)
+select
+  expected.migration,
+  expected.index_name,
+  case when pg_class.relname is null then 'MISSING' else 'present' end as state,
+  expected.purpose
+from expected
+left join pg_class
+  on pg_class.relname = expected.index_name
+ and pg_class.relnamespace = 'public'::regnamespace
+order by expected.migration, expected.index_name;

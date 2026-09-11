@@ -1,6 +1,10 @@
 /**
- * Runs the read-only schema check in supabase/checks/0004_precheck.sql and prints the
+ * Runs the read-only schema check in supabase/checks/schema_precheck.sql and prints the
  * results.
+ *
+ * The check covers every migration, not only the ones that existed when it was written. That
+ * matters more than it sounds: a check that has stopped keeping up reports "all present" over a
+ * schema half of which it has never heard of, which is worse than having no check at all.
  *
  * `migrate.mjs --status` reports what the runner recorded in `schema_migrations`. This
  * inspects the database itself, so the two can be compared: a migration recorded as
@@ -47,7 +51,7 @@ const client = new pg.Client({ connectionString: connectionString(), ssl: { reje
 await client.connect();
 
 try {
-  const sql = readFileSync(join(ROOT, "supabase", "checks", "0004_precheck.sql"), "utf8");
+  const sql = readFileSync(join(ROOT, "supabase", "checks", "schema_precheck.sql"), "utf8");
   const results = await client.query(sql);
   const sets = Array.isArray(results) ? results : [results];
 
@@ -56,7 +60,7 @@ try {
     console.log(`\n--- result set ${index + 1} ---`);
     printTable(set.rows);
     for (const row of set.rows) {
-      if (row.state === "MISSING") missing.push(row.table_name ?? row.column_ref);
+      if (row.state === "MISSING") missing.push(row.table_name ?? row.column_ref ?? row.index_name);
     }
   });
 
