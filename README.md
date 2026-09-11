@@ -537,6 +537,35 @@ fall to or below the lead time — the point at which ordering today still beats
 A fixed reorder point in units is optional and off by default, because the lead-time rule
 adapts to how fast a SKU is actually selling and a unit threshold does not.
 
+## Keeping it private
+
+The data here is commercially sensitive and includes customer records, so "only two people can
+see it" has to be true at more than one level.
+
+**The access boundary is row-level security**, not the URL and not the middleware. Every
+dashboard read runs as the signed-in user, and every read policy checks `organisation_members`.
+An account that signs in without a membership row sees nothing at all — not an error page, no
+data. That is the control to rely on; everything below narrows the ways around it.
+
+**Close public sign-up.** Supabase → Authentication → Sign In / Providers → turn off *Allow new
+users to sign up*. Without this anyone can create an account against the project. They would
+still see nothing, but there is no reason to let the door open — add the two real accounts by
+hand under Authentication → Users, with *Auto Confirm* ticked, then `npm run grant:access`.
+
+**The deployment is refused to crawlers twice.** `app/robots.ts` disallows every path, and
+`next.config.ts` sends `X-Robots-Tag: noindex`. The second is what matters: robots.txt only asks
+a crawler not to fetch, and does not stop a URL discovered another way from being listed.
+Neither is access control — an indexed login page leaks that QNCH runs a control centre and
+where, which is worth denying separately from denying the data.
+
+**Do not put the URL anywhere public.** No link from the QNCH site, no pasting it into a public
+issue. A referrer header or a shared screenshot is how these get found.
+
+Optionally, add **Vercel Deployment Protection** (Project → Settings → Deployment Protection) as
+a second gate in front of the application, so a visitor must hold a Vercel account on the team
+before the app loads at all. Availability varies by plan — check what yours offers. It is
+belt-and-braces rather than a replacement: the RLS boundary is what actually protects the data.
+
 ## Guardrails
 
 - Never commit `.env`, service-account files, OAuth tokens, PII exports or financial credentials.
